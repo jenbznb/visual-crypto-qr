@@ -106,28 +106,39 @@ function App() {
             </div>
           </div>
 
-          {/* 右侧：视觉展示 */}
-          <div className="relative bg-white/5 rounded-xl p-8 flex items-center justify-center min-h-[400px] overflow-hidden border border-slate-700">
+          {/* 右侧：视觉展示 - 修复版 */}
+          <div className="relative bg-white rounded-xl p-8 flex items-center justify-center min-h-[400px] overflow-hidden border border-slate-700 shadow-2xl">
+            {/* 模拟白纸背景：bg-white (必须是白的，叠加上去才看得清) */}
+            
             {/* 图层 A (底部) */}
             <img 
               src={shares.share1} 
               alt="Share 1"
-              className={`absolute w-64 h-64 border-4 border-blue-500/30 transition-all duration-700 ease-in-out mix-blend-screen ${
-                 isOverlaid ? 'translate-x-0 rotate-0' : '-translate-x-12 -rotate-6 opacity-80'
+              className={`absolute w-64 h-64 pixelated-image transition-all duration-700 ease-in-out ${
+                 isOverlaid 
+                   ? 'translate-x-0 rotate-0 opacity-100' 
+                   : '-translate-x-24 -rotate-6 opacity-60' 
               }`}
+              style={{ mixBlendMode: 'multiply' }} 
             />
 
             {/* 图层 B (顶部) */}
             <img 
               src={shares.share2} 
               alt="Share 2"
-              className={`absolute w-64 h-64 border-4 border-red-500/30 transition-all duration-700 ease-in-out mix-blend-multiply ${
-                 isOverlaid ? 'translate-x-0 rotate-0' : 'translate-x-12 rotate-6 opacity-80'
+              className={`absolute w-64 h-64 pixelated-image transition-all duration-700 ease-in-out ${
+                 isOverlaid 
+                   ? 'translate-x-0 rotate-0 opacity-100' 
+                   : 'translate-x-24 rotate-6 opacity-60'
               }`}
-              // mix-blend-multiply 是网页模拟"透明胶片叠加"的关键 CSS 属性
+              style={{ mixBlendMode: 'multiply' }} 
             />
+            
+            {/* 提示文字 */}
+            <div className="absolute bottom-4 text-slate-400 text-xs font-mono">
+                {isOverlaid ? "已合并 (模拟灯箱效果)" : "已分离"}
+            </div>
           </div>
-
         </div>
       )}
     </div>
