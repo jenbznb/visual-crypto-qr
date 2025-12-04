@@ -18,10 +18,10 @@ function App() {
       formData.append('text', inputText);
 
       // 注意：本地开发时后端通常在 8000 端口
-      const response = await fetch('http://127.0.0.1:8000/generate', {
-        method: 'POST',
-        body: formData,
-      });
+      const response = awaitfetch('https://api.hunyuan.ggff.net/generate', {
+  method: 'POST',
+  body: formData,
+});
 
       const data = await response.json();
       
