@@ -11,7 +11,15 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        # 这里填你的前端网页地址 (Vercel 部署后访问的那个网址)
+        "https://hunyuan.ggff.net",      
+        "https://www.hunyuan.ggff.net",
+        
+        # 这里填本地开发地址 (保留它，否则你本地跑的时候会报错)
+        "http://localhost:5173",
+        "http://localhost:5174",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
