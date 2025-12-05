@@ -1,6 +1,33 @@
 import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { Html5QrcodeScanner } from 'html5-qrcode'; // 仅用于加密时的扫描，解密不再用它
+import { Html5QrcodeScanner } from 'html5-qrcode';
+
+// --- 工具函数：图片归一化 ---
+// 将上传的任意图片统一缩放到 1000px 宽，解决拍摄距离不同导致的大小不一问题
+const resizeImage = (file, targetWidth = 1000) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = targetWidth / img.width;
+        const canvas = document.createElement('canvas');
+        canvas.width = targetWidth;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        // 使用高质量平滑插值
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png', 0.9));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
+const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
 function App() {
   const [activeTab, setActiveTab] = useState('encrypt');
@@ -95,8 +122,6 @@ function ImagePreviewModal({ imgSrc, text, onClose }) {
     </div>
   );
 }
-
-const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
 // ================= EncryptView (加密) =================
 function EncryptView() {
@@ -274,12 +299,17 @@ function DecryptView() {
     localStorage.setItem('vc_history_decrypt', JSON.stringify(newHistory));
   };
 
-  const handleUpload = (e, setImg) => {
+  // ★ 改动：使用自动缩放逻辑处理上传
+  const handleUpload = async (e, setImgState) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => setImg(e.target.result);
-      reader.readAsDataURL(file);
+      try {
+        const resizedDataUrl = await resizeImage(file, 1000); // 强制缩放到 1000px 宽
+        setImgState(resizedDataUrl);
+      } catch (err) {
+        console.error(err);
+        alert("处理图片时出错，请重试");
+      }
     }
   };
 
@@ -294,6 +324,7 @@ function DecryptView() {
     const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
     await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
     
+    // 因为上传时已经强制 resizeImage 为 1000px 宽，所以这里的 width 是一致的
     canvas.width = image1.width; canvas.height = image1.height;
     ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image1, 0, 0);
@@ -310,7 +341,7 @@ function DecryptView() {
     });
   };
 
-  // ★ 核心改动：调用后端 /decode 接口
+  // 调用后端 /decode 接口
   const handleScanContent = async () => {
     if (!imgA || !imgB) return;
     setIsScanning(true);
