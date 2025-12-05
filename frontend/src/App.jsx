@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, AlertCircle, Share2, History, Trash2, ExternalLink, Copy, Search } from 'lucide-react';
+import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, AlertCircle, Share2, History, Trash2, ExternalLink, Copy, Search, Save } from 'lucide-react';
 import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 
 function App() {
@@ -15,7 +15,7 @@ function App() {
         <p className="text-slate-400 text-sm md:text-base">Naor-Shamir (2,2) 视觉秘密共享算法演示</p>
       </header>
 
-      {/* 修改文案：加密 / 解密 */}
+      {/* 这里的文案已更新为：加密 / 解密 */}
       <div className="flex p-1 bg-slate-800 rounded-xl mb-8 border border-slate-700 no-print">
         <button onClick={() => setActiveTab('encrypt')} className={`flex items-center gap-2 px-6 py-2 rounded-lg transition-all ${activeTab === 'encrypt' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
           <Lock size={18} /> 加密
@@ -224,16 +224,15 @@ function EncryptView() {
   );
 }
 
-// ================= DecryptView (解密 + 自动识别 + 历史记录) =================
+// ================= DecryptView (解密 + 智能识别 + 强制保存) =================
 function DecryptView() {
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [scanResult, setScanResult] = useState(null); 
   const [isScanning, setIsScanning] = useState(false);
-  const [decryptHistory, setDecryptHistory] = useState([]); // 解密历史
+  const [decryptHistory, setDecryptHistory] = useState([]);
 
-  // 加载解密历史
   useEffect(() => {
     const saved = localStorage.getItem('vc_history_decrypt');
     if (saved) setDecryptHistory(JSON.parse(saved));
@@ -241,7 +240,7 @@ function DecryptView() {
 
   const saveToDecryptHistory = (text, combinedImg) => {
     const newItem = { id: Date.now(), text, img: combinedImg, date: new Date().toLocaleString() };
-    const newHistory = [newItem, ...decryptHistory].slice(0, 5); // 只存最近5条
+    const newHistory = [newItem, ...decryptHistory].slice(0, 5);
     setDecryptHistory(newHistory);
     localStorage.setItem('vc_history_decrypt', JSON.stringify(newHistory));
   };
@@ -263,71 +262,89 @@ function DecryptView() {
 
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
-  // ★★★ 核心修复：增强对比度预处理函数 ★★★
+  // ★★★ 核心修复：高斯模糊 + 强对比度 (模拟手机眯眼效果) ★★★
   const enhanceContrast = (ctx, width, height) => {
+    // 1. 先进行高斯模糊，融合噪点
+    ctx.filter = 'blur(1.5px)';
+    ctx.drawImage(ctx.canvas, 0, 0);
+    ctx.filter = 'none'; // 重置 filter
+
+    // 2. 然后再进行二值化阈值处理
     const imageData = ctx.getImageData(0, 0, width, height);
     const data = imageData.data;
-    // 阈值：128是中间值。
-    // 视觉加密原理：白色区域是50%灰。我们需要把灰色(>50-100)强行变白，把黑色(<50)强行变黑
-    // 这里设置阈值为 100，低于100的变成纯黑，高于100的变成纯白
-    const threshold = 100;
+    // 降低阈值到 60 (让深灰色变成白色)，因为 multiply 叠加后通常比较暗
+    const threshold = 60; 
 
     for (let i = 0; i < data.length; i += 4) {
-      // 计算亮度 (简单的 RGB 平均)
       const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      // 二值化处理
+      // 这里的逻辑反直觉：视觉加密的“白”其实是半透明灰(127)。
+      // 叠加后，背景(255) x 背景(255) = 255 (白)
+      // 噪点区(127) x 噪点区(127) = ~64 (深灰)
+      // 我们希望深灰变成黑，白变成白。
+      // 所以 < 阈值 变成 黑， > 阈值 变成 白
       const val = avg < threshold ? 0 : 255;
-      data[i] = val;     // R
-      data[i + 1] = val; // G
-      data[i + 2] = val; // B
-      // Alpha 不变
+      data[i] = val; data[i + 1] = val; data[i + 2] = val;
     }
     ctx.putImageData(imageData, 0, 0);
+  };
+
+  // 生成合成图 Base64 的辅助函数
+  const generateCompositeImage = async () => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const image1 = new Image();
+    const image2 = new Image();
+    const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
+    await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
+    
+    canvas.width = image1.width; canvas.height = image1.height;
+    ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image1, 0, 0);
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.drawImage(image2, offset.x, offset.y);
+    ctx.globalCompositeOperation = 'source-over';
+    
+    // 返回两个：原始合成图(给用户存)，处理后的图(给机器扫)
+    const rawUrl = canvas.toDataURL("image/png");
+    
+    // 对 canvas 进行破坏性处理以供识别
+    enhanceContrast(ctx, canvas.width, canvas.height);
+    
+    return { canvas, rawUrl };
   };
 
   const handleScanContent = async () => {
     if (!imgA || !imgB) return;
     setIsScanning(true);
     
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const image1 = new Image();
-    const image2 = new Image();
-    const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
-    
-    await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
-    
-    canvas.width = image1.width;
-    canvas.height = image1.height;
-    
-    // 1. 填充白色背景 (重要：防止透明背景干扰)
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let currentRawUrl = "";
 
-    // 2. 绘制合成图
-    ctx.drawImage(image1, 0, 0);
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(image2, offset.x, offset.y);
-    ctx.globalCompositeOperation = 'source-over';
-
-    // 3. ★ 核心步骤：应用对比度增强 (二值化) ★
-    // 这会让灰色的噪点变成白色，黑色的噪点变成黑色，极大提高机器可读性
-    enhanceContrast(ctx, canvas.width, canvas.height);
-
-    // 获取处理后的 Base64 图片 (用于存历史)
-    const processedImgData = canvas.toDataURL("image/png");
-
-    const html5QrCode = new Html5Qrcode("hidden-reader"); 
     try {
+      const { canvas, rawUrl } = await generateCompositeImage();
+      currentRawUrl = rawUrl; // 暂存，如果识别失败要用
+
+      const html5QrCode = new Html5Qrcode("hidden-reader"); 
       const result = await html5QrCode.scanFileV2(canvas);
+      
       setScanResult(result.decodedText);
-      // 4. 保存到解密历史 (包含处理后的合成图)
-      saveToDecryptHistory(result.decodedText, processedImgData);
+      saveToDecryptHistory(result.decodedText, rawUrl); // 保存成功记录
     } catch (err) {
-      alert("未识别到二维码。请尝试：\n1. 使用方向键微调对齐\n2. 确保两张图比例一致");
+      // 识别失败，询问是否强制保存
+      if(confirm("未识别到二维码，可能是对齐或清晰度问题。\n\n是否将当前合成的图片【强制保存】到历史记录？")) {
+        saveToDecryptHistory("未识别内容 (手动保存)", currentRawUrl);
+        alert("已保存到下方历史记录。");
+      }
     } finally {
       setIsScanning(false);
     }
+  };
+
+  // 手动保存功能
+  const handleManualSave = async () => {
+    if (!imgA || !imgB) return;
+    const { rawUrl } = await generateCompositeImage();
+    saveToDecryptHistory("手动保存的图片", rawUrl);
+    alert("已保存到历史记录");
   };
 
   const renderUploadButton = (label, imgState, setImgState, id) => (
@@ -363,13 +380,22 @@ function DecryptView() {
                 <button onClick={() => move(1, 0)} className="ctrl-btn">→</button>
                 <div /><button onClick={() => move(0, 1)} className="ctrl-btn">↓</button><div />
              </div>
-             <button 
-               onClick={handleScanContent} 
-               disabled={isScanning}
-               className="w-full py-3 rounded-lg font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"
-             >
-               {isScanning ? '扫描中...' : <><Search size={18} /> 识别内容</>}
-             </button>
+             <div className="flex flex-col gap-2">
+               <button 
+                 onClick={handleScanContent} 
+                 disabled={isScanning}
+                 className="w-full py-3 rounded-lg font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"
+               >
+                 {isScanning ? '扫描中...' : <><Search size={18} /> 识别内容</>}
+               </button>
+               {/* 纯手动保存按钮 */}
+               <button 
+                 onClick={handleManualSave}
+                 className="w-full py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 flex items-center justify-center gap-2"
+               >
+                 <Save size={16} /> 仅保存图片到历史
+               </button>
+             </div>
           </div>
         )}
       </div>
@@ -391,21 +417,22 @@ function DecryptView() {
           )}
         </div>
 
-        {/* 解密历史记录 (新增) */}
         {decryptHistory.length > 0 && (
           <div className="w-full bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in">
             <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-400"><History size={20}/> 解密历史记录</h3>
             <div className="space-y-3">
               {decryptHistory.map(item => (
                 <div key={item.id} className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700">
-                  {/* 显示合成后的缩略图 */}
                   <img src={item.img} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" />
                   <div className="flex-1 overflow-hidden flex flex-col justify-center">
                     <p className="text-sm text-white truncate font-mono">{item.text}</p>
                     <p className="text-xs text-slate-500">{item.date}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                     <button onClick={() => setScanResult(item.text)} className="p-2 text-slate-400 hover:text-white" title="再次查看"><Search size={16}/></button>
+                     {/* 如果内容不是“未识别”，则显示查看按钮 */}
+                     {item.text !== "未识别内容 (手动保存)" && item.text !== "手动保存的图片" && (
+                       <button onClick={() => setScanResult(item.text)} className="p-2 text-slate-400 hover:text-white" title="查看内容"><Search size={16}/></button>
+                     )}
                      <button onClick={() => deleteDecryptHistory(item.id)} className="p-2 text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
                   </div>
                 </div>
