@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, AlertCircle } from 'lucide-react';
+import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, AlertCircle, Share2 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
 function App() {
@@ -7,7 +7,7 @@ function App() {
 
   return (
     <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-5xl mx-auto font-sans text-slate-100 pb-20">
-      {/* 顶部标题 (打印时隐藏) */}
+      {/* 顶部标题 (打印时自动隐藏) */}
       <header className="mb-8 text-center no-print">
         <h1 className="text-3xl md:text-5xl font-bold flex items-center justify-center gap-3 text-indigo-400 mb-2">
           <ShieldCheck size={40} className="md:w-12 md:h-12" />
@@ -16,7 +16,7 @@ function App() {
         <p className="text-slate-400 text-sm md:text-base">Naor-Shamir (2,2) 视觉秘密共享算法演示</p>
       </header>
 
-      {/* Tab 切换 (打印时隐藏) */}
+      {/* Tab 切换导航 (打印时隐藏) */}
       <div className="flex p-1 bg-slate-800 rounded-xl mb-8 border border-slate-700 no-print">
         <button
           onClick={() => setActiveTab('encrypt')}
@@ -36,6 +36,7 @@ function App() {
         </button>
       </div>
 
+      {/* 动态内容区域 */}
       <div className="w-full animate-fade-in">
         {activeTab === 'encrypt' ? <EncryptView /> : <DecryptView />}
       </div>
@@ -45,9 +46,11 @@ function App() {
 
 /**
  * 子组件：二维码扫描模态框
+ * 负责调用摄像头识别标准二维码
  */
 function QrScannerModal({ onScanSuccess, onClose }) {
   useEffect(() => {
+    // 初始化扫描器
     const scanner = new Html5QrcodeScanner(
       "reader",
       { fps: 10, qrbox: { width: 250, height: 250 } },
@@ -56,11 +59,12 @@ function QrScannerModal({ onScanSuccess, onClose }) {
 
     scanner.render((decodedText) => {
       onScanSuccess(decodedText);
-      scanner.clear();
+      scanner.clear(); // 扫码成功后清除
     }, (error) => {
-      // ignore errors
+      // 忽略扫描过程中的每一帧错误
     });
 
+    // 组件卸载时清理
     return () => {
       scanner.clear().catch(err => console.error("Failed to clear scanner", err));
     };
@@ -89,25 +93,43 @@ function QrScannerModal({ onScanSuccess, onClose }) {
 }
 
 /**
- * 模块一：加密 (EncryptView) - 包含打印和 Render 唤醒提示
+ * 辅助函数：将 dataURL 转为 Blob 对象 (用于分享功能)
+ */
+const dataURLtoBlob = async (dataUrl) => {
+  const res = await fetch(dataUrl);
+  return await res.blob();
+};
+
+/**
+ * 模块一：加密视图 (EncryptView)
+ * 包含：生成、下载、打印、分享、Render唤醒提示
  */
 function EncryptView() {
   const [inputText, setInputText] = useState('https://hunyuan.ggff.net');
   const [loading, setLoading] = useState(false);
-  const [slowLoading, setSlowLoading] = useState(false); // Render 唤醒状态
+  const [slowLoading, setSlowLoading] = useState(false); // Render 服务器唤醒状态
   const [shares, setShares] = useState({ share1: null, share2: null });
   const [isOverlaid, setIsOverlaid] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
-  
   const canvasRef = useRef(null);
+  
+  // 字数限制常量
+  const MAX_LENGTH = 150; 
 
+  // 生成逻辑
   const handleGenerate = async () => {
+    // 1. 字数检查
+    if (inputText.length > MAX_LENGTH) {
+      alert(`文本过长！当前 ${inputText.length} 字符，建议 ${MAX_LENGTH} 以内以保证识别率。`);
+      return;
+    }
+
     setLoading(true);
     setSlowLoading(false);
     setShares({ share1: null, share2: null });
     setIsOverlaid(false);
     
-    // 如果 3 秒后还没返回，显示唤醒提示
+    // 2. 设置超时检测，如果3秒没返回，提示用户服务器正在唤醒
     const timer = setTimeout(() => {
       setSlowLoading(true);
     }, 3000);
@@ -125,10 +147,10 @@ function EncryptView() {
       if (data.status === 'success') {
         setShares({ share1: data.share1, share2: data.share2 });
       } else {
-        alert('Error: ' + data.error);
+        alert('生成失败: ' + data.error);
       }
     } catch (error) {
-      alert('连接后端失败。请确保后端已启动。');
+      alert('连接后端失败。请检查网络或确认后端是否运行。');
     } finally {
       clearTimeout(timer);
       setLoading(false);
@@ -136,13 +158,40 @@ function EncryptView() {
     }
   };
 
+  // 打印功能
   const handlePrint = () => {
-    setIsOverlaid(false); // 强制分离，方便打印剪裁
+    setIsOverlaid(false); // 强制分离图层，方便剪裁
+    // 稍微延迟，等待React重新渲染分离状态后再打印
     setTimeout(() => {
       window.print();
     }, 100);
   };
 
+  // 原生分享功能
+  const handleShare = async () => {
+    if (!navigator.share || !shares.share1) {
+      alert("您的浏览器不支持原生分享，请使用下方按钮手动下载图片。");
+      return;
+    }
+    try {
+      // 将 Base64 转换为文件对象
+      const blob1 = await dataURLtoBlob(shares.share1);
+      const blob2 = await dataURLtoBlob(shares.share2);
+      const file1 = new File([blob1], "share_A.png", { type: "image/png" });
+      const file2 = new File([blob2], "share_B.png", { type: "image/png" });
+      
+      // 调用系统分享菜单
+      await navigator.share({
+        title: 'Visual Crypto Shares',
+        text: '这是生成的两张视觉秘密分片，请查收。',
+        files: [file1, file2]
+      });
+    } catch (err) {
+      console.error("分享取消或失败:", err);
+    }
+  };
+
+  // 浏览器端 Canvas 合成下载
   const handleDownloadCombined = () => {
     if (!shares.share1 || !shares.share2) return;
     const canvas = canvasRef.current;
@@ -154,15 +203,22 @@ function EncryptView() {
     img1.onload = () => {
       canvas.width = img1.width;
       canvas.height = img1.height;
+      // 绘制第一层
       ctx.drawImage(img1, 0, 0);
+      
       img2.src = shares.share2;
       img2.onload = () => {
+        // 设置混合模式为正片叠底
         ctx.globalCompositeOperation = 'multiply';
         ctx.drawImage(img2, 0, 0);
+        
+        // 导出图片
         const link = document.createElement('a');
-        link.download = 'visual_crypto_combined.png';
+        link.download = 'combined_secret.png';
         link.href = canvas.toDataURL('image/png');
         link.click();
+        
+        // 恢复混合模式
         ctx.globalCompositeOperation = 'source-over';
       };
     };
@@ -170,6 +226,7 @@ function EncryptView() {
 
   return (
     <div className="flex flex-col gap-8">
+      {/* 扫描模态框 */}
       {showScanner && (
         <QrScannerModal 
           onClose={() => setShowScanner(false)}
@@ -180,9 +237,15 @@ function EncryptView() {
         />
       )}
 
-      {/* 输入区域 (打印隐藏) */}
+      {/* 输入控制区域 (打印时隐藏) */}
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl no-print">
-        <label className="block text-slate-400 mb-2 text-sm font-semibold uppercase tracking-wider">加密内容</label>
+        <div className="flex justify-between items-center mb-2">
+           <label className="text-slate-400 text-sm font-semibold uppercase tracking-wider">加密内容</label>
+           {/* 字数统计显示 */}
+           <span className={`text-xs ${inputText.length > MAX_LENGTH ? 'text-red-400' : 'text-slate-500'}`}>
+             {inputText.length} / {MAX_LENGTH}
+           </span>
+        </div>
         
         <div className="flex flex-col md:flex-row gap-3">
           <div className="flex-1 flex gap-2">
@@ -210,8 +273,8 @@ function EncryptView() {
             {loading ? '计算中...' : '生成密钥'}
           </button>
         </div>
-
-        {/* Render 唤醒提示 */}
+        
+        {/* Render 唤醒提示 - 仅在等待超过3秒后显示 */}
         {slowLoading && (
           <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-start gap-3 text-amber-200 animate-fade-in">
             <AlertCircle size={20} className="shrink-0 mt-0.5" />
@@ -223,11 +286,11 @@ function EncryptView() {
         )}
       </div>
 
-      {/* 结果展示 */}
+      {/* 结果展示区域 */}
       {shares.share1 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in">
           
-          {/* 左侧：控制面板 (打印隐藏) */}
+          {/* 左侧：控制面板 (打印时隐藏) */}
           <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300">
               <Layers size={20} /> 图层控制
@@ -256,24 +319,28 @@ function EncryptView() {
               
               <div className="grid grid-cols-2 gap-2">
                  <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500">
-                   <CheckCircle2 size={14} /> 下载合成图
+                   <CheckCircle2 size={14} /> 合成下载
                  </button>
                  <button onClick={handlePrint} className="btn-secondary hover:text-indigo-400 hover:border-indigo-500">
                    <Printer size={14} /> 打印图纸
                  </button>
               </div>
+
+              {/* 新增：分享按钮 */}
+              <button 
+                onClick={handleShare} 
+                className="w-full py-3 mt-2 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"
+              >
+                <Share2 size={18} /> 分享密钥给朋友
+              </button>
             </div>
-            
-            <p className="text-xs text-slate-500 mt-4 leading-relaxed">
-              * 提示：点击“打印图纸”可生成适合剪裁的黑白图纸。
-            </p>
           </div>
 
-          {/* 右侧：可视化区域 (打印核心区域) */}
+          {/* 右侧：可视化区域 (打印核心内容) */}
           {/* id="printable-section" 配合 CSS @media print 使用 */}
           <div id="printable-section" className="relative bg-white rounded-xl p-4 md:p-8 flex items-center justify-center min-h-[400px] border border-slate-600 shadow-2xl overflow-hidden select-none">
             
-            {/* 打印时显示的标题 */}
+            {/* 打印时显示的顶部说明 */}
             <div className="hidden print:block absolute top-4 text-black text-center w-full">
                <h2 className="text-xl font-bold">Visual Crypto Shares</h2>
                <p className="text-sm text-gray-500">打印后沿边框剪下，重叠即可查看秘密信息。</p>
@@ -303,19 +370,22 @@ function EncryptView() {
           </div>
         </div>
       )}
+      {/* 隐藏的 Canvas 用于生成图片 */}
       <canvas ref={canvasRef} className="hidden" />
     </div>
   );
 }
 
 /**
- * 模块二：解密 (DecryptView) - 完整保留
+ * 模块二：解密视图 (DecryptView)
+ * 包含：拍照上传、图层对齐、合成预览
  */
 function DecryptView() {
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
 
+  // 处理文件上传
   const handleUpload = (e, setImg) => {
     const file = e.target.files[0];
     if (file) {
@@ -325,8 +395,10 @@ function DecryptView() {
     }
   };
 
+  // 控制位移
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
+  // 渲染上传按钮组件 (这里恢复了可读性强的写法)
   const renderUploadButton = (label, imgState, setImgState, id) => (
     <div className="upload-box">
       <label className="text-sm text-slate-400 mb-1 block">{label}</label>
@@ -334,6 +406,7 @@ function DecryptView() {
         <input 
           type="file" 
           accept="image/*" 
+          // capture="environment" // 注意：部分安卓设备加上此属性后无法选择相册，故默认移除，由系统弹窗决定
           onChange={(e) => handleUpload(e, setImgState)} 
           className="hidden" 
           id={id} 
@@ -379,6 +452,7 @@ function DecryptView() {
           </div>
         </div>
 
+        {/* 微调控制面板 */}
         {imgA && imgB && (
           <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in">
              <h3 className="text-lg font-bold mb-4 text-emerald-400 flex items-center gap-2">
@@ -414,7 +488,9 @@ function DecryptView() {
           <div className="relative bg-white w-full h-full min-h-[400px] rounded flex items-center justify-center overflow-hidden">
              <div className="relative w-full h-full flex items-center justify-center">
                 <div className="relative max-w-full max-h-full">
+                  {/* 底层图片 A */}
                   <img src={imgA} className="relative z-10 pixelated-image mix-blend-multiply opacity-80 max-w-[300px] md:max-w-[400px]" />
+                  {/* 顶层图片 B (可移动) */}
                   <img 
                     src={imgB} 
                     className="absolute top-0 left-0 z-20 pixelated-image mix-blend-multiply opacity-80 transition-transform duration-75 max-w-[300px] md:max-w-[400px]"
