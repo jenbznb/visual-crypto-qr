@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
+import { Html5QrcodeScanner } from 'html5-qrcode'; // 仅用于加密时的扫描，解密不再用它
 
 function App() {
   const [activeTab, setActiveTab] = useState('encrypt');
@@ -31,7 +31,7 @@ function App() {
   );
 }
 
-// 扫描器模态框
+// 扫描器模态框 (仅加密页使用)
 function QrScannerModal({ onScanSuccess, onClose }) {
   useEffect(() => {
     const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
@@ -52,7 +52,7 @@ function QrScannerModal({ onScanSuccess, onClose }) {
   );
 }
 
-// 识别结果/内容弹窗 (含复制/跳转)
+// 识别结果弹窗
 function ResultModal({ content, onClose }) {
   const isUrl = content.startsWith('http://') || content.startsWith('https://');
   const handleCopy = () => { navigator.clipboard.writeText(content); alert('已复制'); };
@@ -61,7 +61,7 @@ function ResultModal({ content, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
       <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 transform transition-all scale-100">
         <div className="flex justify-between items-start mb-4">
-          <h3 className="text-xl font-bold text-emerald-400 flex items-center gap-2"><CheckCircle2 size={24} /> 识别结果</h3>
+          <h3 className="text-xl font-bold text-emerald-400 flex items-center gap-2"><CheckCircle2 size={24} /> 识别成功</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
         </div>
         <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6 break-words max-h-60 overflow-y-auto">
@@ -76,7 +76,7 @@ function ResultModal({ content, onClose }) {
   );
 }
 
-// 图片预览模态框 (用于查看解密历史图片)
+// 图片预览模态框
 function ImagePreviewModal({ imgSrc, text, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 no-print" onClick={onClose}>
@@ -96,10 +96,9 @@ function ImagePreviewModal({ imgSrc, text, onClose }) {
   );
 }
 
-// 辅助函数
 const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
-// ================= EncryptView (加密 + 进度条 + 历史记录) =================
+// ================= EncryptView (加密) =================
 function EncryptView() {
   const [inputText, setInputText] = useState('https://hunyuan.ggff.net');
   const [loading, setLoading] = useState(false);
@@ -192,17 +191,10 @@ function EncryptView() {
             {loading ? <Loader2 className="animate-spin" size={20} /> : '开始加密'}
           </button>
         </div>
-        
-        {/* 视觉进度条 (仅装饰) */}
         {loading && (
           <div className="mt-4 animate-fade-in">
-             <div className="flex justify-between text-xs text-indigo-300 mb-1">
-               <span>正在加密计算中...</span>
-               <span>Processing</span>
-             </div>
-             <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-               <div className="h-full bg-indigo-500 rounded-full animate-progress-indeterminate"></div>
-             </div>
+             <div className="flex justify-between text-xs text-indigo-300 mb-1"><span>正在加密计算中...</span><span>Processing</span></div>
+             <div className="h-2 bg-slate-700 rounded-full overflow-hidden"><div className="h-full bg-indigo-500 rounded-full animate-progress-indeterminate"></div></div>
           </div>
         )}
       </div>
@@ -254,7 +246,7 @@ function EncryptView() {
   );
 }
 
-// ================= DecryptView (解密 + 多重识别策略 + 历史修复) =================
+// ================= DecryptView (解密 + OpenCV后端支持) =================
 function DecryptView() {
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
@@ -262,7 +254,7 @@ function DecryptView() {
   const [scanResult, setScanResult] = useState(null); 
   const [isScanning, setIsScanning] = useState(false);
   const [decryptHistory, setDecryptHistory] = useState([]);
-  const [previewItem, setPreviewItem] = useState(null); // 用于查看大图
+  const [previewItem, setPreviewItem] = useState(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('vc_history_decrypt');
@@ -293,8 +285,8 @@ function DecryptView() {
 
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
-  // 生成基础合成图
-  const createBaseCanvas = async () => {
+  // 生成合成图并转换为 Blob
+  const generateCompositeBlob = async () => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     const image1 = new Image();
@@ -308,88 +300,46 @@ function DecryptView() {
     ctx.globalCompositeOperation = 'multiply';
     ctx.drawImage(image2, offset.x, offset.y);
     ctx.globalCompositeOperation = 'source-over';
-    return { canvas, ctx };
+    
+    const rawUrl = canvas.toDataURL("image/png");
+    
+    return new Promise(resolve => {
+        canvas.toBlob(blob => {
+            resolve({ blob, rawUrl });
+        }, 'image/png');
+    });
   };
 
-  // 处理变体 1：高斯模糊 (模拟手机)
-  const processVariantBlur = (canvas) => {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
-    const ctx = tempCanvas.getContext('2d');
-    ctx.filter = 'blur(2px)';
-    ctx.drawImage(canvas, 0, 0);
-    // 阈值化
-    const imgData = ctx.getImageData(0,0, canvas.width, canvas.height);
-    for(let i=0; i<imgData.data.length; i+=4) {
-      const avg = (imgData.data[i]+imgData.data[i+1]+imgData.data[i+2])/3;
-      const v = avg < 80 ? 0 : 255;
-      imgData.data[i]=v; imgData.data[i+1]=v; imgData.data[i+2]=v;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    return tempCanvas;
-  }
-
-  // 处理变体 2：缩放 + 阈值 (大杀器)
-  const processVariantScale = (canvas) => {
-    const tempCanvas = document.createElement('canvas');
-    // 缩小到 400px 宽，让噪点强制融合
-    const scale = 400 / canvas.width;
-    tempCanvas.width = 400; 
-    tempCanvas.height = canvas.height * scale;
-    const ctx = tempCanvas.getContext('2d');
-    ctx.drawImage(canvas, 0, 0, tempCanvas.width, tempCanvas.height);
-    
-    const imgData = ctx.getImageData(0,0, tempCanvas.width, tempCanvas.height);
-    for(let i=0; i<imgData.data.length; i+=4) {
-      const avg = (imgData.data[i]+imgData.data[i+1]+imgData.data[i+2])/3;
-      // 视觉加密的白其实是50%灰，黑是100%黑。中间点约 128。我们取 90 做分界线。
-      const v = avg < 100 ? 0 : 255; 
-      imgData.data[i]=v; imgData.data[i+1]=v; imgData.data[i+2]=v;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    return tempCanvas;
-  }
-
+  // ★ 核心改动：调用后端 /decode 接口
   const handleScanContent = async () => {
     if (!imgA || !imgB) return;
     setIsScanning(true);
-    let rawUrl = "";
+    let currentRawUrl = "";
 
     try {
-      const { canvas } = await createBaseCanvas();
-      rawUrl = canvas.toDataURL("image/png");
-      const html5QrCode = new Html5Qrcode("hidden-reader");
+      const { blob, rawUrl } = await generateCompositeBlob();
+      currentRawUrl = rawUrl;
 
-      // 策略：尝试 3 种变体，只要有一个成功就返回
-      const tryScan = async (cvs) => {
-        try { return await html5QrCode.scanFileV2(cvs); } catch (e) { return null; }
-      };
+      const formData = new FormData();
+      formData.append('file', blob, 'composite.png');
 
-      // 1. 试原图
-      let result = await tryScan(canvas);
-      
-      // 2. 失败则试：缩放版 (通常最有效)
-      if (!result) {
-        console.log("原图识别失败，尝试缩放增强...");
-        result = await tryScan(processVariantScale(canvas));
-      }
+      const apiUrl = window.location.hostname.includes('localhost') 
+        ? 'http://localhost:8000/decode' 
+        : 'https://api.hunyuan.ggff.net/decode';
 
-      // 3. 失败则试：模糊版
-      if (!result) {
-         console.log("缩放识别失败，尝试高斯模糊...");
-         result = await tryScan(processVariantBlur(canvas));
-      }
+      const response = await fetch(apiUrl, { method: 'POST', body: formData });
+      const data = await response.json();
 
-      if (result) {
-        setScanResult(result.decodedText);
-        saveToDecryptHistory(result.decodedText, rawUrl);
+      if (data.status === 'success') {
+        setScanResult(data.content);
+        saveToDecryptHistory(data.content, rawUrl);
       } else {
-        throw new Error("Failed all variants");
+        throw new Error(data.error || "无法识别");
       }
 
     } catch (err) {
-      if(confirm("未识别到二维码。\n是否将当前图片【手动保存】到历史记录以便稍后查看？")) {
-        saveToDecryptHistory("手动保存的图片", rawUrl);
+      if(confirm("识别失败：无法读取二维码。\n\n是否将图片【手动保存】到历史记录？")) {
+        saveToDecryptHistory("手动保存的图片", currentRawUrl);
       }
     } finally {
       setIsScanning(false);
@@ -399,8 +349,8 @@ function DecryptView() {
   // 手动保存
   const handleManualSave = async () => {
     if (!imgA || !imgB) return;
-    const { canvas } = await createBaseCanvas();
-    saveToDecryptHistory("手动保存的图片", canvas.toDataURL("image/png"));
+    const { rawUrl } = await generateCompositeBlob();
+    saveToDecryptHistory("手动保存的图片", rawUrl);
     alert("已保存");
   };
 
@@ -420,7 +370,6 @@ function DecryptView() {
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 no-print">
       {scanResult && <ResultModal content={scanResult} onClose={() => setScanResult(null)} />}
       {previewItem && <ImagePreviewModal imgSrc={previewItem.img} text={previewItem.text} onClose={() => setPreviewItem(null)} />}
-      <div id="hidden-reader" className="hidden"></div>
 
       <div className="lg:col-span-1 space-y-4">
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
@@ -439,8 +388,12 @@ function DecryptView() {
                 <div /><button onClick={() => move(0, 1)} className="ctrl-btn">↓</button><div />
              </div>
              <div className="flex flex-col gap-2">
-               <button onClick={handleScanContent} disabled={isScanning} className="w-full py-3 rounded-lg font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg">
-                 {isScanning ? '扫描优化中...' : <><Search size={18} /> 识别内容</>}
+               <button 
+                 onClick={handleScanContent} 
+                 disabled={isScanning}
+                 className="w-full py-3 rounded-lg font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"
+               >
+                 {isScanning ? <Loader2 className="animate-spin" size={20} /> : <><Search size={18} /> 云端智能识别</>}
                </button>
                <button onClick={handleManualSave} className="w-full py-2 rounded-lg text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 flex items-center justify-center gap-2"><Save size={16} /> 仅保存图片</button>
              </div>
@@ -453,7 +406,7 @@ function DecryptView() {
           {!imgA || !imgB ? (
              <div className="text-slate-500 flex flex-col items-center text-center p-8">
                <Layers size={48} className="mb-4 opacity-50" /><p>请上传两张分片</p>
-               <p className="text-sm opacity-60 mt-2 max-w-md">点击识别后，系统会尝试多种图像增强算法来读取内容。</p>
+               <p className="text-sm opacity-60 mt-2 max-w-md">上传后点击“云端智能识别”，系统将利用 OpenCV 进行高精度还原。</p>
              </div>
           ) : (
             <div className="relative bg-white w-full h-full min-h-[400px] rounded flex items-center justify-center overflow-hidden">
@@ -474,12 +427,8 @@ function DecryptView() {
                   key={item.id} 
                   className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-emerald-500 cursor-pointer transition-all"
                   onClick={() => {
-                     // 修复交互：点击整行，根据是否有内容决定是预览图片还是显示结果
-                     if (item.text === "手动保存的图片" || item.text === "未识别内容 (手动保存)") {
-                        setPreviewItem(item);
-                     } else {
-                        setScanResult(item.text);
-                     }
+                     // 统一逻辑：全部先打开预览图
+                     setPreviewItem(item);
                   }}
                 >
                   <img src={item.img} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" />
