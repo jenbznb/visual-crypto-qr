@@ -3,14 +3,32 @@
 @tailwind utilities;
 
 body {
-  background-color: #0f172a; /* 深色背景 */
+  background-color: #0f172a;
   color: white;
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
-/* 强制像素化渲染，防止浏览器模糊处理 */
+
 .pixelated-image {
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
-  -ms-interpolation-mode: nearest-neighbor;
+}
+
+/* 简单的淡入动画 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+/* 复用按钮样式 */
+.btn-secondary {
+  @apply flex items-center justify-center gap-2 p-3 bg-slate-900 rounded-lg border border-slate-700 text-slate-300 text-xs hover:border-indigo-500 hover:text-white transition-all cursor-pointer;
+}
+
+/* 微调方向键 */
+.ctrl-btn {
+  @apply bg-slate-700 hover:bg-emerald-600 text-white rounded p-2 flex items-center justify-center font-bold active:scale-95 transition-all select-none;
 }
