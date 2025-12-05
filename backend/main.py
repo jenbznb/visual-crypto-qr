@@ -3,7 +3,7 @@ import base64
 import secrets
 import numpy as np
 import qrcode
-import cv2  # 引入 OpenCV
+import cv2
 from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
@@ -68,6 +68,48 @@ def generate_visual_crypto(text_data):
     
     return Image.fromarray(add_alignment_marks(full_a), mode='L'), Image.fromarray(add_alignment_marks(full_b), mode='L')
 
+# ★★★ 核心修复：图像预处理管道 ★★★
+def try_decode(img_bgr):
+    detect = cv2.QRCodeDetector()
+    
+    # 策略 1: 暴力缩放 (最有效的反视觉加密手段)
+    # 将图片缩小到不同的倍数。缩小的过程就是像素融合的过程。
+    # 视觉加密通常是 2x2 像素块，所以缩小 0.5 倍是最直接的还原。
+    scales = [0.5, 0.33, 0.25, 0.2, 1.0] # 优先尝试 0.5 (还原原始分辨率)
+
+    for scale in scales:
+        # 1. 计算新尺寸
+        width = int(img_bgr.shape[1] * scale)
+        height = int(img_bgr.shape[0] * scale)
+        dim = (width, height)
+        
+        # 2. 缩放 (INTER_AREA 是重采样最好的算法，能有效去除莫尔纹和噪点)
+        resized = cv2.resize(img_bgr, dim, interpolation=cv2.INTER_AREA)
+        
+        # 3. 转灰度
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        
+        # 4. 二值化 (清洗噪点)
+        # 视觉加密的白色区域平均亮度约为 127。黑色区域为 0。
+        # 我们取 100 作为分界线。高于 100 的全部变成纯白。
+        _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+        
+        # 尝试识别
+        value, _, _ = detect.detectAndDecode(thresh)
+        if value:
+            print(f"Success at scale {scale}")
+            return value
+
+        # 5. 如果还不行，尝试形态学开运算 (去除小白点)
+        kernel = np.ones((3,3), np.uint8)
+        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        value_open, _, _ = detect.detectAndDecode(opening)
+        if value_open:
+            print(f"Success at scale {scale} with morphology")
+            return value_open
+
+    return None
+
 @app.post("/generate")
 async def generate(text: str = Form(...)):
     try:
@@ -79,43 +121,22 @@ async def generate(text: str = Form(...)):
 
 @app.post("/decode")
 async def decode_qr(file: UploadFile = File(...)):
-    """
-    接收前端合成好的图片，使用 OpenCV 进行处理和识别
-    """
     try:
-        # 1. 读取图片文件
+        # 1. 读取图片
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         if img is None:
-            return {"status": "fail", "error": "无法解析图片数据"}
+            return {"status": "fail", "error": "无法解析图片文件"}
 
-        # 2. 图像预处理 (OpenCV 核心魔法)
-        # 转为灰度图
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        
-        # 二值化处理 (Thresholding)
-        # 视觉加密的原理：黑色是0，白色区域其实是噪点(约等于127灰度)
-        # 我们设置阈值为 100：低于100的变成纯黑，高于100的变成纯白
-        # 这样就把噪点全部“漂白”了，只剩下清晰的二维码图案
-        _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+        # 2. 进入多重策略识别管道
+        result = try_decode(img)
 
-        # 3. 识别二维码
-        detect = cv2.QRCodeDetector()
-        value, points, straight_qrcode = detect.detectAndDecode(thresh)
-
-        if value:
-            return {"status": "success", "content": value}
+        if result:
+            return {"status": "success", "content": result}
         else:
-            # 如果标准方法失败，尝试更激进的形态学处理再试一次
-            kernel = np.ones((3,3), np.uint8)
-            opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            value2, _, _ = detect.detectAndDecode(opening)
-            if value2:
-                 return {"status": "success", "content": value2}
-            
-            return {"status": "fail", "error": "无法识别二维码，请确保图片对齐"}
+            return {"status": "fail", "error": "无法识别二维码。请尝试：\n1. 确保两张图完全对齐\n2. 上传更清晰的原图"}
 
     except Exception as e:
         print(f"Decode Error: {e}")
