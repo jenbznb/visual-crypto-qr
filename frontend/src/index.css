@@ -73,3 +73,34 @@ body {
   margin-top: 10px;
   display: inline-block;
 }
+
+/* --- 打印模式样式 --- */
+@media print {
+  /* 隐藏所有内容 */
+  body * {
+    visibility: hidden;
+  }
+  /* 只显示我们指定的打印区域 */
+  #printable-section, #printable-section * {
+    visibility: visible;
+  }
+  /* 调整打印位置到纸张左上角 */
+  #printable-section {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    border: none;
+    box-shadow: none;
+    background: white;
+    color: black;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 打印时强制隐藏所有按钮和提示文字 */
+  .no-print {
+    display: none !important;
+  }
+}
