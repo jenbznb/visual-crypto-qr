@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 
-// --- 工具函数：图片归一化 ---
-// 将上传的任意图片统一缩放到 1000px 宽，解决拍摄距离不同导致的大小不一问题
+// --- 修改后的工具函数：图片归一化 ---
 const resizeImage = (file, targetWidth = 1000) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -15,18 +14,21 @@ const resizeImage = (file, targetWidth = 1000) => {
         canvas.width = targetWidth;
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
-        // 使用高质量平滑插值
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
+        
+        // ★★★ 核心修复：强制关闭平滑处理 ★★★
+        // 视觉加密必须保持像素锐利，不能有灰度过渡
+        ctx.imageSmoothingEnabled = false; 
+        ctx.webkitImageSmoothingEnabled = false;
+        ctx.mozImageSmoothingEnabled = false;
+        
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/png', 0.9));
+        resolve(canvas.toDataURL('image/png', 1.0)); // 使用最高质量
       };
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
   });
 };
-
 const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
 function App() {
@@ -319,15 +321,24 @@ function DecryptView() {
   const generateCompositeBlob = async () => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
+    
+    // ★★★ 核心修复：这里也要关闭平滑，防止合成时产生模糊 ★★★
+    ctx.imageSmoothingEnabled = false;
+    ctx.webkitImageSmoothingEnabled = false;
+    ctx.mozImageSmoothingEnabled = false;
+
     const image1 = new Image();
     const image2 = new Image();
     const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
     await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
     
-    // 因为上传时已经强制 resizeImage 为 1000px 宽，所以这里的 width 是一致的
     canvas.width = image1.width; canvas.height = image1.height;
     ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // 绘制第一张
     ctx.drawImage(image1, 0, 0);
+    
+    // 绘制第二张（叠加模式）
     ctx.globalCompositeOperation = 'multiply';
     ctx.drawImage(image2, offset.x, offset.y);
     ctx.globalCompositeOperation = 'source-over';
