@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 
 // --- 修改后的工具函数：图片归一化 ---
 const resizeImage = (file, targetWidth = 1000) => {
@@ -60,13 +60,75 @@ function App() {
   );
 }
 
-// 扫描器模态框 (仅加密页使用)
+// ================= QrScannerModal (加密页使用) =================
+// ★★★ 核心重构：手动控制摄像头，默认启动后置 ★★★
 function QrScannerModal({ onScanSuccess, onClose }) {
+  const html5QrCodeRef = useRef(null);
+
   useEffect(() => {
-    const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
-    scanner.render((text) => { onScanSuccess(text); scanner.clear(); }, () => {});
-    return () => { scanner.clear().catch(console.error); };
-  }, [onScanSuccess]);
+    // 组件加载时，初始化并启动扫描
+    const startScanner = async () => {
+      // 1. 创建 Html5Qrcode 实例，并存入 ref
+      const html5QrCode = new Html5Qrcode("reader"); // "reader" 是 div 的 id
+      html5QrCodeRef.current = html5QrCode;
+
+      try {
+        // 2. 获取所有可用的摄像头
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length) {
+          let cameraId;
+          
+          // 3. 智能查找后置摄像头
+          const rearCamera = devices.find(device => 
+            device.label.toLowerCase().includes('back') || 
+            device.label.toLowerCase().includes('rear') ||
+            device.label.toLowerCase().includes('environment')
+          );
+
+          if (rearCamera) {
+            cameraId = rearCamera.id;
+            console.log("Found rear camera:", rearCamera.label);
+          } else {
+            // 4. 如果找不到，使用列表中的最后一个摄像头作为备选
+            cameraId = devices[devices.length - 1].id;
+            console.log("Rear camera not found, using last camera in list:", devices[devices.length - 1].label);
+          }
+
+          // 5. 使用找到的摄像头 ID 启动扫描
+          await html5QrCode.start(
+            cameraId,
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText, decodedResult) => {
+              // 扫描成功
+              onScanSuccess(decodedText);
+            },
+            (errorMessage) => {
+              // 扫描失败或未找到二维码，忽略
+            }
+          );
+        } else {
+          alert("未找到可用的摄像头设备。");
+          onClose();
+        }
+      } catch (err) {
+        console.error("摄像头启动失败:", err);
+        alert("无法启动摄像头，请检查浏览器权限。");
+        onClose();
+      }
+    };
+
+    startScanner();
+
+    // 组件卸载时，确保停止摄像头
+    return () => {
+      if (html5QrCodeRef.current) {
+        html5QrCodeRef.current.stop().catch(err => {
+          // 忽略停止时可能出现的错误
+          console.error("停止扫描仪失败", err);
+        });
+      }
+    };
+  }, [onScanSuccess, onClose]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
@@ -75,7 +137,10 @@ function QrScannerModal({ onScanSuccess, onClose }) {
           <h3 className="font-bold flex items-center gap-2 text-white"><ScanLine size={20}/> 扫描二维码</h3>
           <button onClick={onClose}><X size={24} /></button>
         </div>
-        <div className="p-4 bg-slate-900"><div id="reader"></div></div>
+        {/* 这个 div 是摄像头视频渲染的目标 */}
+        <div className="p-4 bg-slate-900" style={{ position: 'relative' }}>
+          <div id="reader" style={{ width: '100%' }}></div>
+        </div>
       </div>
     </div>
   );
