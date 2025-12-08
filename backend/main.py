@@ -13,8 +13,15 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # --- 新前端域名 (你的新家) ---
+        "https://vc.115333.xyz",
+        "https://www.vc.115333.xyz",  # 加上 www 以防万一
+
+        # --- 旧前端域名 (为了兼容旧访问，不要删) ---
         "https://hunyuan.ggff.net",
         "https://www.hunyuan.ggff.net",
+
+        # --- 本地开发环境 ---
         "http://localhost:5173",
         "http://localhost:5174",
     ],
