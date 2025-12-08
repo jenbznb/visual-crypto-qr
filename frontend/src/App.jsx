@@ -31,6 +31,21 @@ const resizeImage = (file, targetWidth = 1000) => {
 };
 const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
+// --- 新增：智能判断后端 API 地址 ---
+const getApiUrl = (endpoint) => {
+  const hostname = window.location.hostname;
+  // 1. 如果是本地开发
+  if (hostname.includes('localhost')) {
+    return `http://localhost:8000${endpoint}`;
+  }
+  // 2. 如果是旧域名
+  if (hostname.includes('hunyuan.ggff.net')) {
+    return `https://api.hunyuan.ggff.net${endpoint}`;
+  }
+  // 3. 其他情况默认用新域名 (vc.115333.xyz)
+  return `https://vc-api.115333.xyz${endpoint}`;
+};
+
 function App() {
   const [activeTab, setActiveTab] = useState('encrypt');
 
@@ -192,7 +207,8 @@ function ImagePreviewModal({ imgSrc, text, onClose }) {
 
 // ================= EncryptView (加密) =================
 function EncryptView() {
-  const [inputText, setInputText] = useState('https://hunyuan.ggff.net');
+ // 让默认文本自动变成当前网站的网址，这样在新域名下就显示新域名
+  const [inputText, setInputText] = useState(window.location.origin);
   const [loading, setLoading] = useState(false);
   const [shares, setShares] = useState({ share1: null, share2: null });
   const [isOverlaid, setIsOverlaid] = useState(false);
@@ -227,7 +243,8 @@ function EncryptView() {
     try {
       const formData = new FormData();
       formData.append('text', inputText);
-      const apiUrl = window.location.hostname.includes('localhost') ? 'http://localhost:8000/generate' : 'https://api.hunyuan.ggff.net/generate';
+      // 使用刚才定义的智能函数
+      const apiUrl = getApiUrl('/generate');
       const response = await fetch(apiUrl, { method: 'POST', body: formData });
       const data = await response.json();
       if (data.status === 'success') {
@@ -430,9 +447,8 @@ function DecryptView() {
       const formData = new FormData();
       formData.append('file', blob, 'composite.png');
 
-      const apiUrl = window.location.hostname.includes('localhost') 
-        ? 'http://localhost:8000/decode' 
-        : 'https://api.hunyuan.ggff.net/decode';
+      // 使用刚才定义的智能函数
+      const apiUrl = getApiUrl('/decode');
 
       const response = await fetch(apiUrl, { method: 'POST', body: formData });
       const data = await response.json();
