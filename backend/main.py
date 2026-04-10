@@ -45,19 +45,20 @@ def add_alignment_marks(img_array):
         img_array[y_start : y_start + mark_size, x_start + mark_size//2 - thickness//2 : x_start + mark_size//2 + thickness//2] = 0
     return img_array
 
-def generate_visual_crypto(text_data):
-    # 1. 生成高容错二维码
-    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
-    qr.add_data(text_data)
-    qr.make(fit=True)
-    source_arr = np.array(qr.make_image(fill_color="black", back_color="white").convert('1'), dtype=bool)
+# ================= 新增：公共核心加密函数 =================
+def apply_visual_crypto(source_arr):
+    """
+    接收一个布尔矩阵 (True为白, False为黑)，返回两张视觉加密噪点图
+    """
     h, w = source_arr.shape
     
-    # 2. 加密逻辑
+    # 1. 2x2 模式定义
     patterns = np.array([
         [[0, 1], [0, 1]], [[1, 0], [1, 0]], [[0, 0], [1, 1]], 
         [[1, 1], [0, 0]], [[0, 1], [1, 0]], [[1, 0], [0, 1]]
     ], dtype=np.uint8)
+    
+    # 2. 像素打散
     rng = np.random.randint(0, 6, size=(h, w))
     pat_a = patterns[rng]
     mask = source_arr[:, :, np.newaxis, np.newaxis]
@@ -67,14 +68,71 @@ def generate_visual_crypto(text_data):
     share_a_img = pat_a.swapaxes(1, 2).reshape(final_h, final_w) * 255
     share_b_img = pat_b.swapaxes(1, 2).reshape(final_h, final_w) * 255
     
+    # 3. 填充与对齐标记
     padding = 20
     full_a = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
     full_b = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
     full_a[padding:-padding, padding:-padding] = share_a_img
     full_b[padding:-padding, padding:-padding] = share_b_img
     
-    return Image.fromarray(add_alignment_marks(full_a), mode='L'), Image.fromarray(add_alignment_marks(full_b), mode='L')
+    img1 = Image.fromarray(add_alignment_marks(full_a), mode='L')
+    img2 = Image.fromarray(add_alignment_marks(full_b), mode='L')
+    
+    return img1, img2
 
+
+# ================= 重构：文本转二维码再加密 =================
+def generate_visual_crypto(text_data):
+    # 只负责：文本 -> 二维码 -> 布尔矩阵
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
+    qr.add_data(text_data)
+    qr.make(fit=True)
+    source_arr = np.array(qr.make_image(fill_color="black", back_color="white").convert('1'), dtype=bool)
+    
+    # 调用公共加密函数
+    return apply_visual_crypto(source_arr)
+
+
+# ================= 路由 1：处理文本 =================
+@app.post("/generate")
+async def generate(text: str = Form(...)):
+    try:
+        img1, img2 = generate_visual_crypto(text)
+        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ================= 路由 2：处理上传图片 =================
+@app.post("/generate_image")
+async def generate_image(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_GRAYSCALE)
+
+        if img is None:
+            return {"status": "fail", "error": "无法解析图片文件"}
+
+        # 尺寸控制与预处理
+        max_size = 250
+        h, w = img.shape
+        if max(h, w) > max_size:
+            scale = max_size / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+        # 二值化 -> 布尔矩阵
+        _, thresh = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)
+        source_arr = np.array(thresh, dtype=bool)
+
+        # 调用公共加密函数 (不再重复写那几十行逻辑)
+        img1, img2 = apply_visual_crypto(source_arr)
+
+        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2)}
+
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
 # ★★★ 核心修复：图像预处理管道 ★★★
 def try_decode(img_bgr):
     detect = cv2.QRCodeDetector()
