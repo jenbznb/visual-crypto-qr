@@ -140,7 +140,7 @@ function QrScannerModal({ onScanSuccess, onClose }) {
   );
 }
 
-// ================= ResultModal (★新增了净化图片展示) =================
+// ================= ResultModal =================
 function ResultModal({ content, imgSrc, onClose }) {
   const isUrl = content.startsWith('http://') || content.startsWith('https://');
   const handleCopy = () => { navigator.clipboard.writeText(content); alert('已复制'); };
@@ -153,7 +153,6 @@ function ResultModal({ content, imgSrc, onClose }) {
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
         </div>
         
-        {/* ★ 在弹窗中直观展示净化后的图 */}
         {imgSrc && (
           <div className="mb-4 flex flex-col items-center bg-white p-2 rounded-lg border border-slate-600">
              <img src={imgSrc} className="max-h-48 object-contain pixelated-image" alt="Purified QR" />
@@ -281,11 +280,10 @@ function EncryptView() {
     } catch (err) { console.error(err); }
   };
 
-  // ★ 核心修复：优先下载净化后的图片
   const handleDownloadCombined = () => {
     if (shares.previewClean) {
         const link = document.createElement('a'); 
-        link.download = 'purified_combined.png';
+        link.download = 'combined_result.png';
         link.href = shares.previewClean; 
         link.click();
         return;
@@ -349,8 +347,9 @@ function EncryptView() {
           <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300"><Layers size={20} /> 分发与控制</h3>
             <div className="space-y-3">
+              {/* ★ 修改：去掉了净化字眼 */}
               <button onClick={() => setIsPreview(!isPreview)} className={`w-full py-3 rounded-lg font-semibold border flex justify-center items-center gap-2 transition-all ${isPreview ? 'bg-amber-500/20 text-amber-400 border-amber-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
-                {isPreview ? <><Layers size={18} /> 关闭净化效果</> : <><Search size={18} /> 预览云端净化效果</>}
+                {isPreview ? <><Layers size={18} /> 关闭预览</> : <><Search size={18} /> 预览效果</>}
               </button>
               
               <div className="grid grid-cols-2 gap-2 pt-4 border-t border-slate-700">
@@ -358,7 +357,8 @@ function EncryptView() {
                  <a href={shares.share2} download="Share_B.png" className="btn-secondary"><Download size={14}/> 下载图层 B</a>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                 <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 合成下载 (净化版)</button>
+                 {/* ★ 修改：去掉了净化版字眼 */}
+                 <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 合成下载</button>
                  <button onClick={handlePrint} className="btn-secondary hover:text-indigo-400 hover:border-indigo-500"><Printer size={14} /> 打印图纸</button>
               </div>
               <button onClick={handleShare} className="w-full py-3 mt-2 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"><Share2 size={18} /> 分享图层给朋友</button>
@@ -382,10 +382,7 @@ function EncryptView() {
               </div>
             ) : (
               <div className="flex flex-col items-center w-full">
-                 <span className="mb-4 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-lg text-sm font-bold border border-emerald-500/50 shadow-lg text-center leading-relaxed">
-                    ✨ 已应用三步净化算法 <br/>
-                    <span className="text-xs text-emerald-500 font-normal">(INTER_AREA + 二值化 + 形态学开运算)</span>
-                 </span>
+                 {/* ★ 修改：去掉了预览图上方的绿色方块，直接展示图片 */}
                  {shares.previewClean ? (
                    <img src={shares.previewClean} className="max-w-[250px] md:max-w-[300px] w-full bg-white pixelated-image shadow-2xl rounded" />
                  ) : (
@@ -535,13 +532,12 @@ function DecryptView() {
 
   const handleManualSave = async () => {
     if (!imgA || !imgB) return;
-    // 如果已经有净化过的图片，优先保存净化的
     if (purifiedImg) {
         const link = document.createElement('a'); 
         link.download = 'purified_result.png';
         link.href = purifiedImg; 
         link.click();
-        saveToDecryptHistory("手动保存的净化图片", purifiedImg);
+        saveToDecryptHistory("手动保存的图片", purifiedImg);
         alert("已保存");
         return;
     }
@@ -564,7 +560,6 @@ function DecryptView() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 no-print">
-      {/* ★ 传递 purifiedImg 给结果弹窗，让用户直接看到净化奇迹 */}
       {scanResult && <ResultModal content={scanResult} imgSrc={purifiedImg} onClose={() => setScanResult(null)} />}
       {previewItem && <ImagePreviewModal imgSrc={previewItem.img} text={previewItem.text} onClose={() => setPreviewItem(null)} />}
 
@@ -603,11 +598,11 @@ function DecryptView() {
           {!imgA || !imgB ? (
              <div className="text-slate-500 flex flex-col items-center text-center p-8">
                <Layers size={48} className="mb-4 opacity-50" /><p>请上传两张分片</p>
-               <p className="text-sm opacity-60 mt-2 max-w-md">上传图层并拖拽对齐十字标，然后点击识别即可查看净化效果。</p>
+               <p className="text-sm opacity-60 mt-2 max-w-md">上传图层并拖拽对齐十字标，然后点击识别即可查看识别结果。</p>
              </div>
           ) : purifiedImg ? (
              <div className="relative bg-white w-full h-full min-h-[400px] rounded flex flex-col items-center justify-center overflow-hidden p-4 animate-fade-in">
-                <span className="absolute top-4 px-4 py-2 bg-emerald-600/10 text-emerald-600 rounded-lg text-sm font-bold border border-emerald-500/30 z-30 shadow-sm backdrop-blur-sm">✨ 云端智能净化结果</span>
+                <span className="absolute top-4 px-4 py-2 bg-emerald-600/10 text-emerald-600 rounded-lg text-sm font-bold border border-emerald-500/30 z-30 shadow-sm backdrop-blur-sm">✨ 云端智能识别结果</span>
                 <img src={purifiedImg} className="relative z-10 pixelated-image max-w-[300px] md:max-w-[400px] object-contain shadow-2xl" />
                 <button onClick={() => setPurifiedImg(null)} className="absolute bottom-4 px-6 py-2 bg-slate-800 text-white hover:bg-slate-700 rounded-lg shadow-lg z-30 transition-all font-bold">返回手动对齐</button>
              </div>
