@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 
-// --- 工具函数：图片归一化 ---
+// --- 工具函数 ---
 const resizeImage = (file, targetWidth = 1000) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -15,13 +15,12 @@ const resizeImage = (file, targetWidth = 1000) => {
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
         
-        // ★★★ 核心：强制关闭平滑处理 ★★★
         ctx.imageSmoothingEnabled = false; 
         ctx.webkitImageSmoothingEnabled = false;
         ctx.mozImageSmoothingEnabled = false;
         
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/png', 1.0)); // 使用最高质量
+        resolve(canvas.toDataURL('image/png', 1.0)); 
       };
       img.src = event.target.result;
     };
@@ -141,8 +140,8 @@ function QrScannerModal({ onScanSuccess, onClose }) {
   );
 }
 
-// ================= ResultModal =================
-function ResultModal({ content, onClose }) {
+// ================= ResultModal (★新增了净化图片展示) =================
+function ResultModal({ content, imgSrc, onClose }) {
   const isUrl = content.startsWith('http://') || content.startsWith('https://');
   const handleCopy = () => { navigator.clipboard.writeText(content); alert('已复制'); };
 
@@ -150,10 +149,18 @@ function ResultModal({ content, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
       <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 transform transition-all scale-100">
         <div className="flex justify-between items-start mb-4">
-          <h3 className="text-xl font-bold text-emerald-400 flex items-center gap-2"><CheckCircle2 size={24} /> 识别成功</h3>
+          <h3 className="text-xl font-bold text-emerald-400 flex items-center gap-2"><CheckCircle2 size={24} /> 识别并净化成功</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
         </div>
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6 break-words max-h-60 overflow-y-auto">
+        
+        {/* ★ 在弹窗中直观展示净化后的图 */}
+        {imgSrc && (
+          <div className="mb-4 flex flex-col items-center bg-white p-2 rounded-lg border border-slate-600">
+             <img src={imgSrc} className="max-h-48 object-contain pixelated-image" alt="Purified QR" />
+          </div>
+        )}
+
+        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6 break-words max-h-40 overflow-y-auto">
           <p className="text-slate-200 font-mono text-sm">{content}</p>
         </div>
         <div className="flex gap-3">
@@ -193,7 +200,6 @@ function EncryptView() {
   const [inputImagePreview, setInputImagePreview] = useState(null);
 
   const [loading, setLoading] = useState(false);
-  // ★ 修改：状态中新增 previewClean，接收后端的净化图
   const [shares, setShares] = useState({ share1: null, share2: null, previewClean: null });
   const [isPreview, setIsPreview] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -231,7 +237,6 @@ function EncryptView() {
   };
 
   const handleGenerate = async () => {
-    // 初始化清空 previewClean
     setLoading(true); setShares({ share1: null, share2: null, previewClean: null }); setIsPreview(false);
     
     try {
@@ -253,7 +258,6 @@ function EncryptView() {
       const data = await response.json();
       
       if (data.status === 'success' || data.share1) {
-        // ★ 修改：同时接收 previewClean 数据
         setShares({ share1: data.share1, share2: data.share2, previewClean: data.previewClean });
         saveToHistory(inputType === 'text' ? inputText : "[加密图片]", data.share1, data.share2);
       } else { 
@@ -277,7 +281,16 @@ function EncryptView() {
     } catch (err) { console.error(err); }
   };
 
+  // ★ 核心修复：优先下载净化后的图片
   const handleDownloadCombined = () => {
+    if (shares.previewClean) {
+        const link = document.createElement('a'); 
+        link.download = 'purified_combined.png';
+        link.href = shares.previewClean; 
+        link.click();
+        return;
+    }
+    
     if (!shares.share1) return;
     const ctx = canvasRef.current.getContext('2d');
     const i1 = new Image(); i1.src = shares.share1;
@@ -336,7 +349,6 @@ function EncryptView() {
           <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300"><Layers size={20} /> 分发与控制</h3>
             <div className="space-y-3">
-              {/* ★ 修改：更新预览按钮的文案，突出净化效果 */}
               <button onClick={() => setIsPreview(!isPreview)} className={`w-full py-3 rounded-lg font-semibold border flex justify-center items-center gap-2 transition-all ${isPreview ? 'bg-amber-500/20 text-amber-400 border-amber-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
                 {isPreview ? <><Layers size={18} /> 关闭净化效果</> : <><Search size={18} /> 预览云端净化效果</>}
               </button>
@@ -346,7 +358,7 @@ function EncryptView() {
                  <a href={shares.share2} download="Share_B.png" className="btn-secondary"><Download size={14}/> 下载图层 B</a>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                 <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 合成下载</button>
+                 <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 合成下载 (净化版)</button>
                  <button onClick={handlePrint} className="btn-secondary hover:text-indigo-400 hover:border-indigo-500"><Printer size={14} /> 打印图纸</button>
               </div>
               <button onClick={handleShare} className="w-full py-3 mt-2 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"><Share2 size={18} /> 分享图层给朋友</button>
@@ -357,7 +369,6 @@ function EncryptView() {
             <div className="hidden print:block absolute top-4 text-black text-center w-full"><h2 className="text-xl font-bold">Visual Crypto Shares</h2></div>
             
             {!isPreview ? (
-              // 分离展示模式 (清晰平铺)
               <div className="flex flex-col md:flex-row gap-6 items-center justify-center w-full print:static">
                 <div className="flex flex-col items-center">
                   <span className="mb-2 px-3 py-1 bg-slate-800 text-slate-300 rounded text-sm font-bold shadow">图层 A</span>
@@ -370,7 +381,6 @@ function EncryptView() {
                 </div>
               </div>
             ) : (
-              // ★ 修改：预览展示模式，展示后端传回的净化图
               <div className="flex flex-col items-center w-full">
                  <span className="mb-4 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-lg text-sm font-bold border border-emerald-500/50 shadow-lg text-center leading-relaxed">
                     ✨ 已应用三步净化算法 <br/>
@@ -379,7 +389,6 @@ function EncryptView() {
                  {shares.previewClean ? (
                    <img src={shares.previewClean} className="max-w-[250px] md:max-w-[300px] w-full bg-white pixelated-image shadow-2xl rounded" />
                  ) : (
-                   // 容错后备方案：如果网络抖动没传过来净化图，依然用 CSS 叠底
                    <div className="relative w-full max-w-[300px] aspect-square flex items-center justify-center bg-white rounded shadow-inner">
                      <img src={shares.share1} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
                      <img src={shares.share2} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
@@ -426,8 +435,6 @@ function DecryptView() {
   const [isScanning, setIsScanning] = useState(false);
   const [decryptHistory, setDecryptHistory] = useState([]);
   const [previewItem, setPreviewItem] = useState(null);
-
-  // ★ 新增：存储解密成功后由后端传回的净化图片
   const [purifiedImg, setPurifiedImg] = useState(null);
 
   useEffect(() => {
@@ -455,7 +462,6 @@ function DecryptView() {
         const resizedDataUrl = await resizeImage(file, 1000);
         setImgState(resizedDataUrl);
       } catch (err) {
-        console.error(err);
         alert("处理图片时出错，请重试");
       }
     }
@@ -513,13 +519,11 @@ function DecryptView() {
 
       if (data.status === 'success') {
         setScanResult(data.content);
-        // ★ 修改：设置并展示净化后的图，同时保存到历史记录
         setPurifiedImg(data.cleanImage); 
         saveToDecryptHistory(data.content, data.cleanImage || rawUrl);
       } else {
         throw new Error(data.error || "无法识别");
       }
-
     } catch (err) {
       if(confirm("识别失败：无法读取二维码。\n\n是否将图片【手动保存】到历史记录？")) {
         saveToDecryptHistory("手动保存的图片", currentRawUrl);
@@ -531,6 +535,16 @@ function DecryptView() {
 
   const handleManualSave = async () => {
     if (!imgA || !imgB) return;
+    // 如果已经有净化过的图片，优先保存净化的
+    if (purifiedImg) {
+        const link = document.createElement('a'); 
+        link.download = 'purified_result.png';
+        link.href = purifiedImg; 
+        link.click();
+        saveToDecryptHistory("手动保存的净化图片", purifiedImg);
+        alert("已保存");
+        return;
+    }
     const { rawUrl } = await generateCompositeBlob();
     saveToDecryptHistory("手动保存的图片", rawUrl);
     alert("已保存");
@@ -550,7 +564,8 @@ function DecryptView() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 no-print">
-      {scanResult && <ResultModal content={scanResult} onClose={() => setScanResult(null)} />}
+      {/* ★ 传递 purifiedImg 给结果弹窗，让用户直接看到净化奇迹 */}
+      {scanResult && <ResultModal content={scanResult} imgSrc={purifiedImg} onClose={() => setScanResult(null)} />}
       {previewItem && <ImagePreviewModal imgSrc={previewItem.img} text={previewItem.text} onClose={() => setPreviewItem(null)} />}
 
       <div className="lg:col-span-1 space-y-4">
@@ -588,17 +603,15 @@ function DecryptView() {
           {!imgA || !imgB ? (
              <div className="text-slate-500 flex flex-col items-center text-center p-8">
                <Layers size={48} className="mb-4 opacity-50" /><p>请上传两张分片</p>
-               <p className="text-sm opacity-60 mt-2 max-w-md">上传后点击“云端智能识别”，系统将利用 OpenCV 进行高精度还原。</p>
+               <p className="text-sm opacity-60 mt-2 max-w-md">上传图层并拖拽对齐十字标，然后点击识别即可查看净化效果。</p>
              </div>
           ) : purifiedImg ? (
-             // ★ 修改：识别成功后，展示洗干净的图 ★
              <div className="relative bg-white w-full h-full min-h-[400px] rounded flex flex-col items-center justify-center overflow-hidden p-4 animate-fade-in">
                 <span className="absolute top-4 px-4 py-2 bg-emerald-600/10 text-emerald-600 rounded-lg text-sm font-bold border border-emerald-500/30 z-30 shadow-sm backdrop-blur-sm">✨ 云端智能净化结果</span>
                 <img src={purifiedImg} className="relative z-10 pixelated-image max-w-[300px] md:max-w-[400px] object-contain shadow-2xl" />
                 <button onClick={() => setPurifiedImg(null)} className="absolute bottom-4 px-6 py-2 bg-slate-800 text-white hover:bg-slate-700 rounded-lg shadow-lg z-30 transition-all font-bold">返回手动对齐</button>
              </div>
           ) : (
-            // 原本的手动对齐状态
             <div className="relative bg-white w-full h-full min-h-[400px] rounded flex items-center justify-center overflow-hidden">
                <div className="relative max-w-full max-h-full">
                  <img src={imgA} className="relative z-10 pixelated-image mix-blend-multiply opacity-80 max-w-[300px] md:max-w-[400px]" />
