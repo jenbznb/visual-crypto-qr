@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Upload, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 
-// --- 修改后的工具函数：图片归一化 ---
+// --- 工具函数：图片归一化 ---
 const resizeImage = (file, targetWidth = 1000) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -15,8 +15,7 @@ const resizeImage = (file, targetWidth = 1000) => {
         canvas.height = img.height * scale;
         const ctx = canvas.getContext('2d');
         
-        // ★★★ 核心修复：强制关闭平滑处理 ★★★
-        // 视觉加密必须保持像素锐利，不能有灰度过渡
+        // ★★★ 核心：强制关闭平滑处理 ★★★
         ctx.imageSmoothingEnabled = false; 
         ctx.webkitImageSmoothingEnabled = false;
         ctx.mozImageSmoothingEnabled = false;
@@ -31,18 +30,15 @@ const resizeImage = (file, targetWidth = 1000) => {
 };
 const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
-// --- 新增：智能判断后端 API 地址 ---
+// --- 智能判断后端 API 地址 ---
 const getApiUrl = (endpoint) => {
   const hostname = window.location.hostname;
-  // 1. 如果是本地开发
   if (hostname.includes('localhost')) {
     return `http://localhost:8000${endpoint}`;
   }
-  // 2. 如果是旧域名
   if (hostname.includes('hunyuan.ggff.net')) {
     return `https://api.hunyuan.ggff.net${endpoint}`;
   }
-  // 3. 其他情况默认用新域名 (vc.115333.xyz)
   return `https://vc-api.115333.xyz${endpoint}`;
 };
 
@@ -75,25 +71,19 @@ function App() {
   );
 }
 
-// ================= QrScannerModal (加密页使用) =================
-// ★★★ 核心重构：手动控制摄像头，默认启动后置 ★★★
+// ================= QrScannerModal =================
 function QrScannerModal({ onScanSuccess, onClose }) {
   const html5QrCodeRef = useRef(null);
 
   useEffect(() => {
-    // 组件加载时，初始化并启动扫描
     const startScanner = async () => {
-      // 1. 创建 Html5Qrcode 实例，并存入 ref
-      const html5QrCode = new Html5Qrcode("reader"); // "reader" 是 div 的 id
+      const html5QrCode = new Html5Qrcode("reader");
       html5QrCodeRef.current = html5QrCode;
 
       try {
-        // 2. 获取所有可用的摄像头
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length) {
           let cameraId;
-          
-          // 3. 智能查找后置摄像头
           const rearCamera = devices.find(device => 
             device.label.toLowerCase().includes('back') || 
             device.label.toLowerCase().includes('rear') ||
@@ -102,24 +92,17 @@ function QrScannerModal({ onScanSuccess, onClose }) {
 
           if (rearCamera) {
             cameraId = rearCamera.id;
-            console.log("Found rear camera:", rearCamera.label);
           } else {
-            // 4. 如果找不到，使用列表中的最后一个摄像头作为备选
             cameraId = devices[devices.length - 1].id;
-            console.log("Rear camera not found, using last camera in list:", devices[devices.length - 1].label);
           }
 
-          // 5. 使用找到的摄像头 ID 启动扫描
           await html5QrCode.start(
             cameraId,
             { fps: 10, qrbox: { width: 250, height: 250 } },
             (decodedText, decodedResult) => {
-              // 扫描成功
               onScanSuccess(decodedText);
             },
-            (errorMessage) => {
-              // 扫描失败或未找到二维码，忽略
-            }
+            (errorMessage) => { }
           );
         } else {
           alert("未找到可用的摄像头设备。");
@@ -134,11 +117,9 @@ function QrScannerModal({ onScanSuccess, onClose }) {
 
     startScanner();
 
-    // 组件卸载时，确保停止摄像头
     return () => {
       if (html5QrCodeRef.current) {
         html5QrCodeRef.current.stop().catch(err => {
-          // 忽略停止时可能出现的错误
           console.error("停止扫描仪失败", err);
         });
       }
@@ -152,7 +133,6 @@ function QrScannerModal({ onScanSuccess, onClose }) {
           <h3 className="font-bold flex items-center gap-2 text-white"><ScanLine size={20}/> 扫描二维码</h3>
           <button onClick={onClose}><X size={24} /></button>
         </div>
-        {/* 这个 div 是摄像头视频渲染的目标 */}
         <div className="p-4 bg-slate-900" style={{ position: 'relative' }}>
           <div id="reader" style={{ width: '100%' }}></div>
         </div>
@@ -161,7 +141,7 @@ function QrScannerModal({ onScanSuccess, onClose }) {
   );
 }
 
-// 识别结果弹窗
+// ================= ResultModal =================
 function ResultModal({ content, onClose }) {
   const isUrl = content.startsWith('http://') || content.startsWith('https://');
   const handleCopy = () => { navigator.clipboard.writeText(content); alert('已复制'); };
@@ -185,7 +165,7 @@ function ResultModal({ content, onClose }) {
   );
 }
 
-// 图片预览模态框
+// ================= ImagePreviewModal =================
 function ImagePreviewModal({ imgSrc, text, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 no-print" onClick={onClose}>
@@ -205,16 +185,17 @@ function ImagePreviewModal({ imgSrc, text, onClose }) {
   );
 }
 
-// ================= EncryptView (加密) =================
+// ================= EncryptView (加密页) =================
 function EncryptView() {
-  const [inputType, setInputType] = useState('text'); // 'text' 或 'image'
+  const [inputType, setInputType] = useState('text');
   const [inputText, setInputText] = useState(window.location.origin);
-  const [inputImage, setInputImage] = useState(null); // 存储用户上传的图片对象
-  const [inputImagePreview, setInputImagePreview] = useState(null); // 存储预览用的 Base64
+  const [inputImage, setInputImage] = useState(null);
+  const [inputImagePreview, setInputImagePreview] = useState(null);
 
   const [loading, setLoading] = useState(false);
-  const [shares, setShares] = useState({ share1: null, share2: null });
-  const [isPreview, setIsPreview] = useState(false); // 改名：isOverlaid -> isPreview
+  // ★ 修改：状态中新增 previewClean，接收后端的净化图
+  const [shares, setShares] = useState({ share1: null, share2: null, previewClean: null });
+  const [isPreview, setIsPreview] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [history, setHistory] = useState([]); 
   const canvasRef = useRef(null);
@@ -239,7 +220,6 @@ function EncryptView() {
     localStorage.setItem('vc_history_encrypt', JSON.stringify(newHistory));
   };
 
-  // 处理图片上传
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -251,7 +231,8 @@ function EncryptView() {
   };
 
   const handleGenerate = async () => {
-    setLoading(true); setShares({ share1: null, share2: null }); setIsPreview(false);
+    // 初始化清空 previewClean
+    setLoading(true); setShares({ share1: null, share2: null, previewClean: null }); setIsPreview(false);
     
     try {
       let apiUrl, formData;
@@ -265,14 +246,15 @@ function EncryptView() {
         if (!inputImage) { alert("请先上传一张图片或二维码！"); setLoading(false); return; }
         formData = new FormData();
         formData.append('file', inputImage);
-        apiUrl = getApiUrl('/generate_image'); // 调用新接口
+        apiUrl = getApiUrl('/generate_image');
       }
 
       const response = await fetch(apiUrl, { method: 'POST', body: formData });
       const data = await response.json();
       
       if (data.status === 'success' || data.share1) {
-        setShares({ share1: data.share1, share2: data.share2 });
+        // ★ 修改：同时接收 previewClean 数据
+        setShares({ share1: data.share1, share2: data.share2, previewClean: data.previewClean });
         saveToHistory(inputType === 'text' ? inputText : "[加密图片]", data.share1, data.share2);
       } else { 
         alert('Error: ' + data.error); 
@@ -296,7 +278,6 @@ function EncryptView() {
   };
 
   const handleDownloadCombined = () => {
-    // ... (保留你原有的 handleDownloadCombined 代码)
     if (!shares.share1) return;
     const ctx = canvasRef.current.getContext('2d');
     const i1 = new Image(); i1.src = shares.share1;
@@ -318,14 +299,12 @@ function EncryptView() {
       {showScanner && <QrScannerModal onClose={() => setShowScanner(false)} onScanSuccess={(t) => {setInputText(t); setInputType('text'); setShowScanner(false);}} />}
       
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl no-print">
-        {/* 输入模式切换 */}
         <div className="flex gap-4 mb-6 border-b border-slate-700 pb-2">
           <button onClick={() => setInputType('text')} className={`text-sm font-bold pb-2 border-b-2 transition-all ${inputType === 'text' ? 'text-indigo-400 border-indigo-400' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>文本转二维码</button>
           <button onClick={() => setInputType('image')} className={`text-sm font-bold pb-2 border-b-2 transition-all ${inputType === 'image' ? 'text-indigo-400 border-indigo-400' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>直接加密图片</button>
         </div>
 
         <div className="flex flex-col gap-4">
-          {/* 动态输入区域 */}
           {inputType === 'text' ? (
              <div className="flex gap-2">
                <input value={inputText} onChange={(e) => setInputText(e.target.value)} className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500" placeholder="输入文本或扫描..." />
@@ -357,9 +336,9 @@ function EncryptView() {
           <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300"><Layers size={20} /> 分发与控制</h3>
             <div className="space-y-3">
-              {/* 改动：将合并图层改为预览解密效果 */}
+              {/* ★ 修改：更新预览按钮的文案，突出净化效果 */}
               <button onClick={() => setIsPreview(!isPreview)} className={`w-full py-3 rounded-lg font-semibold border flex justify-center items-center gap-2 transition-all ${isPreview ? 'bg-amber-500/20 text-amber-400 border-amber-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
-                {isPreview ? <><Layers size={18} /> 关闭预览模式</> : <><Search size={18} /> 预览物理重叠效果</>}
+                {isPreview ? <><Layers size={18} /> 关闭净化效果</> : <><Search size={18} /> 预览云端净化效果</>}
               </button>
               
               <div className="grid grid-cols-2 gap-2 pt-4 border-t border-slate-700">
@@ -377,7 +356,6 @@ function EncryptView() {
           <div id="printable-section" className="relative bg-slate-900 rounded-xl p-4 flex flex-col items-center justify-center min-h-[400px] border border-slate-600 shadow-2xl overflow-hidden select-none">
             <div className="hidden print:block absolute top-4 text-black text-center w-full"><h2 className="text-xl font-bold">Visual Crypto Shares</h2></div>
             
-            {/* 改动：根据 isPreview 状态切换视图 */}
             {!isPreview ? (
               // 分离展示模式 (清晰平铺)
               <div className="flex flex-col md:flex-row gap-6 items-center justify-center w-full print:static">
@@ -392,20 +370,46 @@ function EncryptView() {
                 </div>
               </div>
             ) : (
-              // 预览展示模式 (叠底效果)
-              <div className="relative w-full max-w-[300px] aspect-square flex items-center justify-center bg-white rounded shadow-inner">
-                <img src={shares.share1} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
-                <img src={shares.share2} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
+              // ★ 修改：预览展示模式，展示后端传回的净化图
+              <div className="flex flex-col items-center w-full">
+                 <span className="mb-4 px-4 py-2 bg-emerald-600/20 text-emerald-400 rounded-lg text-sm font-bold border border-emerald-500/50 shadow-lg text-center leading-relaxed">
+                    ✨ 已应用三步净化算法 <br/>
+                    <span className="text-xs text-emerald-500 font-normal">(INTER_AREA + 二值化 + 形态学开运算)</span>
+                 </span>
+                 {shares.previewClean ? (
+                   <img src={shares.previewClean} className="max-w-[250px] md:max-w-[300px] w-full bg-white pixelated-image shadow-2xl rounded" />
+                 ) : (
+                   // 容错后备方案：如果网络抖动没传过来净化图，依然用 CSS 叠底
+                   <div className="relative w-full max-w-[300px] aspect-square flex items-center justify-center bg-white rounded shadow-inner">
+                     <img src={shares.share1} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
+                     <img src={shares.share2} className="absolute w-full h-full object-contain mix-blend-multiply opacity-90 pixelated-image" />
+                   </div>
+                 )}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* 历史记录部分保留不变 ... */}
       {history.length > 0 && (
         <div className="w-full mt-8 bg-slate-800 p-6 rounded-xl border border-slate-700 no-print animate-fade-in">
-          {/* ... */}
+          <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-indigo-300"><History size={20}/> 加密历史记录</h3>
+          <div className="space-y-3">
+            {history.map(item => (
+              <div 
+                key={item.id} 
+                className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-indigo-500 cursor-pointer transition-all"
+                onClick={() => setShares({ share1: item.share1, share2: item.share2, previewClean: null })}
+              >
+                <img src={item.share1} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" />
+                <div className="flex-1 overflow-hidden flex flex-col justify-center">
+                  <p className="text-sm text-white truncate font-mono">{item.text}</p>
+                  <p className="text-xs text-slate-500">{item.date}</p>
+                </div>
+                <button onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       <canvas ref={canvasRef} className="hidden" />
@@ -413,7 +417,7 @@ function EncryptView() {
   );
 }
 
-// ================= DecryptView (解密 + OpenCV后端支持) =================
+// ================= DecryptView (解密页) =================
 function DecryptView() {
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
@@ -422,6 +426,9 @@ function DecryptView() {
   const [isScanning, setIsScanning] = useState(false);
   const [decryptHistory, setDecryptHistory] = useState([]);
   const [previewItem, setPreviewItem] = useState(null);
+
+  // ★ 新增：存储解密成功后由后端传回的净化图片
+  const [purifiedImg, setPurifiedImg] = useState(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('vc_history_decrypt');
@@ -441,12 +448,11 @@ function DecryptView() {
     localStorage.setItem('vc_history_decrypt', JSON.stringify(newHistory));
   };
 
-  // ★ 改动：使用自动缩放逻辑处理上传
   const handleUpload = async (e, setImgState) => {
     const file = e.target.files[0];
     if (file) {
       try {
-        const resizedDataUrl = await resizeImage(file, 1000); // 强制缩放到 1000px 宽
+        const resizedDataUrl = await resizeImage(file, 1000);
         setImgState(resizedDataUrl);
       } catch (err) {
         console.error(err);
@@ -457,12 +463,10 @@ function DecryptView() {
 
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
-  // 生成合成图并转换为 Blob
   const generateCompositeBlob = async () => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // ★★★ 核心修复：这里也要关闭平滑，防止合成时产生模糊 ★★★
     ctx.imageSmoothingEnabled = false;
     ctx.webkitImageSmoothingEnabled = false;
     ctx.mozImageSmoothingEnabled = false;
@@ -475,10 +479,8 @@ function DecryptView() {
     canvas.width = image1.width; canvas.height = image1.height;
     ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // 绘制第一张
     ctx.drawImage(image1, 0, 0);
     
-    // 绘制第二张（叠加模式）
     ctx.globalCompositeOperation = 'multiply';
     ctx.drawImage(image2, offset.x, offset.y);
     ctx.globalCompositeOperation = 'source-over';
@@ -492,7 +494,6 @@ function DecryptView() {
     });
   };
 
-  // 调用后端 /decode 接口
   const handleScanContent = async () => {
     if (!imgA || !imgB) return;
     setIsScanning(true);
@@ -505,7 +506,6 @@ function DecryptView() {
       const formData = new FormData();
       formData.append('file', blob, 'composite.png');
 
-      // 使用刚才定义的智能函数
       const apiUrl = getApiUrl('/decode');
 
       const response = await fetch(apiUrl, { method: 'POST', body: formData });
@@ -513,7 +513,9 @@ function DecryptView() {
 
       if (data.status === 'success') {
         setScanResult(data.content);
-        saveToDecryptHistory(data.content, rawUrl);
+        // ★ 修改：设置并展示净化后的图，同时保存到历史记录
+        setPurifiedImg(data.cleanImage); 
+        saveToDecryptHistory(data.content, data.cleanImage || rawUrl);
       } else {
         throw new Error(data.error || "无法识别");
       }
@@ -527,7 +529,6 @@ function DecryptView() {
     }
   };
 
-  // 手动保存
   const handleManualSave = async () => {
     if (!imgA || !imgB) return;
     const { rawUrl } = await generateCompositeBlob();
@@ -589,7 +590,15 @@ function DecryptView() {
                <Layers size={48} className="mb-4 opacity-50" /><p>请上传两张分片</p>
                <p className="text-sm opacity-60 mt-2 max-w-md">上传后点击“云端智能识别”，系统将利用 OpenCV 进行高精度还原。</p>
              </div>
+          ) : purifiedImg ? (
+             // ★ 修改：识别成功后，展示洗干净的图 ★
+             <div className="relative bg-white w-full h-full min-h-[400px] rounded flex flex-col items-center justify-center overflow-hidden p-4 animate-fade-in">
+                <span className="absolute top-4 px-4 py-2 bg-emerald-600/10 text-emerald-600 rounded-lg text-sm font-bold border border-emerald-500/30 z-30 shadow-sm backdrop-blur-sm">✨ 云端智能净化结果</span>
+                <img src={purifiedImg} className="relative z-10 pixelated-image max-w-[300px] md:max-w-[400px] object-contain shadow-2xl" />
+                <button onClick={() => setPurifiedImg(null)} className="absolute bottom-4 px-6 py-2 bg-slate-800 text-white hover:bg-slate-700 rounded-lg shadow-lg z-30 transition-all font-bold">返回手动对齐</button>
+             </div>
           ) : (
+            // 原本的手动对齐状态
             <div className="relative bg-white w-full h-full min-h-[400px] rounded flex items-center justify-center overflow-hidden">
                <div className="relative max-w-full max-h-full">
                  <img src={imgA} className="relative z-10 pixelated-image mix-blend-multiply opacity-80 max-w-[300px] md:max-w-[400px]" />
@@ -607,10 +616,7 @@ function DecryptView() {
                 <div 
                   key={item.id} 
                   className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-emerald-500 cursor-pointer transition-all"
-                  onClick={() => {
-                     // 统一逻辑：全部先打开预览图
-                     setPreviewItem(item);
-                  }}
+                  onClick={() => setPreviewItem(item)}
                 >
                   <img src={item.img} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" />
                   <div className="flex-1 overflow-hidden flex flex-col justify-center">
