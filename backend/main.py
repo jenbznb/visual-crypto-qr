@@ -42,6 +42,24 @@ def add_alignment_marks(img_array):
         img_array[y_start : y_start + mark_size, x_start + mark_size//2 - thickness//2 : x_start + mark_size//2 + thickness//2] = 0
     return img_array
 
+# --- 工具函数：生成净化后的预览图 ---
+def purify_image_for_preview(stacked_gray, scale=0.5):
+    """提取三步净化算法，专门用于生成前端预览图"""
+    # 1. INTER_AREA 逆向融合
+    dim = (int(stacked_gray.shape[1] * scale), int(stacked_gray.shape[0] * scale))
+    resized = cv2.resize(stacked_gray, dim, interpolation=cv2.INTER_AREA)
+    
+    # 2. 全局阈值二值化 (强制去除50%灰度)
+    _, thresh = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
+    
+    # 3. 形态学开运算
+    kernel = np.ones((3,3), np.uint8)
+    opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    
+    # 转为 base64
+    pil_img = Image.fromarray(opening, mode='L')
+    return img_to_base64(pil_img)
+    
 # ================= 核心加密逻辑 (视觉密码算法) =================
 def apply_visual_crypto(source_arr):
     """
@@ -69,13 +87,20 @@ def apply_visual_crypto(source_arr):
     padding = 20
     full_a = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
     full_b = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
+   # 修改 apply_visual_crypto 的最后部分
     full_a[padding:-padding, padding:-padding] = share_a_img
     full_b[padding:-padding, padding:-padding] = share_b_img
+    
+    # --- 新增：生成完美的净化预览图 ---
+    # 物理叠加等同于取矩阵最小值
+    stacked = np.minimum(full_a, full_b)
+    preview_clean_b64 = purify_image_for_preview(stacked)
     
     img1 = Image.fromarray(add_alignment_marks(full_a), mode='L')
     img2 = Image.fromarray(add_alignment_marks(full_b), mode='L')
     
-    return img1, img2
+    # 修改返回值，增加第三个参数
+    return img1, img2, preview_clean_b64
 
 # ================= 业务逻辑：文本处理 =================
 def generate_visual_crypto_from_text(text_data):
@@ -91,8 +116,9 @@ def generate_visual_crypto_from_text(text_data):
 async def generate(text: str = Form(...)):
     """处理文本转二维码加密"""
     try:
-        img1, img2 = generate_visual_crypto_from_text(text)
-        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2)}
+       # 接收 preview_clean
+        img1, img2, preview_clean = generate_visual_crypto_from_text(text)
+        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2), "previewClean": preview_clean}
     except Exception as e:
         print(f"Generate Error: {e}")
         return {"status": "fail", "error": str(e)}
@@ -119,8 +145,8 @@ async def generate_image(file: UploadFile = File(...)):
         _, thresh = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)
         source_arr = np.array(thresh, dtype=bool)
 
-        img1, img2 = apply_visual_crypto(source_arr)
-        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2)}
+        img1, img2, preview_clean = apply_visual_crypto(source_arr)
+        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2), "previewClean": preview_clean}
     except Exception as e:
         print(f"Generate Image Error: {e}")
         return {"status": "fail", "error": str(e)}
@@ -129,7 +155,6 @@ async def generate_image(file: UploadFile = File(...)):
 
 def try_decode(img_bgr):
     detect = cv2.QRCodeDetector()
-    # 针对视觉加密叠加图的多种处理策略
     scales = [0.5, 0.33, 0.25, 0.2, 1.0]
 
     for scale in scales:
@@ -138,18 +163,16 @@ def try_decode(img_bgr):
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        # 识别尝试
         value, _, _ = detect.detectAndDecode(thresh)
         if value:
-            return value
+            return value, thresh  # <--- 修改：返回净化数组
 
-        # 形态学清洗策略
         kernel = np.ones((3,3), np.uint8)
         opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
         value_open, _, _ = detect.detectAndDecode(opening)
         if value_open:
-            return value_open
-    return None
+            return value_open, opening # <--- 修改：返回净化数组
+    return None, None
 
 @app.post("/decode")
 async def decode_qr(file: UploadFile = File(...)):
@@ -162,9 +185,11 @@ async def decode_qr(file: UploadFile = File(...)):
         if img is None:
             return {"status": "fail", "error": "无法解析图片文件"}
 
-        result = try_decode(img)
-        if result:
-            return {"status": "success", "content": result}
+        result, clean_arr = try_decode(img)
+        if result and clean_arr is not None:
+            clean_pil = Image.fromarray(clean_arr, mode='L')
+            clean_b64 = img_to_base64(clean_pil)
+            return {"status": "success", "content": result, "cleanImage": clean_b64} # <--- 返回 cleanImage
         else:
             return {"status": "fail", "error": "无法识别二维码。请尝试：\n1. 确保两张图完全对齐\n2. 尝试微调偏移量"}
     except Exception as e:
