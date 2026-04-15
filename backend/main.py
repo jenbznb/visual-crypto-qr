@@ -6,6 +6,9 @@ import cv2
 from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
+import json
+from Crypto.Cipher import AES # 新增 AES 加密库
+import secrets
 
 app = FastAPI()
 
@@ -29,6 +32,40 @@ def img_to_base64(img):
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+
+# --- 工具函数：生成普通二维码 ---
+def generate_normal_qr_base64(text_data):
+    """用于生成装载 AES 密文的普通二维码"""
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+    qr.add_data(text_data)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    return img_to_base64(img)
+
+# --- 工具函数：AES-GCM 加解密 ---
+def encrypt_aes_gcm(plaintext: str, key_hex: str) -> str:
+    """使用 16 字符 (16字节) 的 hex 密钥加密数据"""
+    key = key_hex.encode('utf-8')
+    cipher = AES.new(key, AES.MODE_GCM)
+    ciphertext, tag = cipher.encrypt_and_digest(plaintext.encode('utf-8'))
+    # 将 nonce, tag, ciphertext 打包为 JSON，方便前端直接扫码获取
+    payload = {
+        "n": base64.b64encode(cipher.nonce).decode('utf-8'),
+        "t": base64.b64encode(tag).decode('utf-8'),
+        "c": base64.b64encode(ciphertext).decode('utf-8')
+    }
+    return json.dumps(payload)
+
+def decrypt_aes_gcm(payload_json: str, key_hex: str) -> str:
+    """解析 JSON payload 并使用密钥解密"""
+    data = json.loads(payload_json)
+    nonce = base64.b64decode(data['n'])
+    tag = base64.b64decode(data['t'])
+    ciphertext = base64.b64decode(data['c'])
+    
+    cipher = AES.new(key_hex.encode('utf-8'), AES.MODE_GCM, nonce=nonce)
+    plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+    return plaintext.decode('utf-8')
 
 # --- 工具函数：添加对齐标记 ---
 def add_alignment_marks(img_array):
@@ -103,8 +140,23 @@ def generate_visual_crypto_from_text(text_data):
 @app.post("/generate")
 async def generate(text: str = Form(...)):
     try:
-        img1, img2, preview_clean = generate_visual_crypto_from_text(text)
-        return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2), "previewClean": preview_clean}
+        # 1. 随机生成 16 位 AES 密钥 (8 bytes hex)
+        aes_key = secrets.token_hex(8) 
+        
+        # 2. 数字信道：使用 AES 密钥加密用户的原始长文本
+        encrypted_payload = encrypt_aes_gcm(text, aes_key)
+        ciphertext_qr_b64 = generate_normal_qr_base64(encrypted_payload)
+        
+        # 3. 物理信道：使用视觉密码仅仅加密这 16 位 AES 密钥
+        img1, img2, preview_clean = generate_visual_crypto_from_text(aes_key)
+        
+        return {
+            "status": "success", 
+            "ciphertext_qr": ciphertext_qr_b64, # 新增：给前端展示的密文二维码
+            "share1": img_to_base64(img1), 
+            "share2": img_to_base64(img2), 
+            "previewClean": preview_clean
+        }
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
@@ -131,6 +183,16 @@ async def generate_image(file: UploadFile = File(...)):
         return {"status": "success", "share1": img_to_base64(img1), "share2": img_to_base64(img2), "previewClean": preview_clean}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
+
+@app.post("/decrypt_payload")
+async def decrypt_payload(payload: str = Form(...), key: str = Form(...)):
+    try:
+        plaintext = decrypt_aes_gcm(payload, key)
+        return {"status": "success", "content": plaintext}
+    except ValueError:
+         return {"status": "fail", "error": "解密失败：物理密钥错误或密文被篡改。"}
+    except Exception as e:
+        return {"status": "fail", "error": f"解析异常: {str(e)}"}
 
 # ================= 智能识别管道 (解密) =================
 
