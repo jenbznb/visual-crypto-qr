@@ -7,7 +7,7 @@ from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import json
-from Crypto.Cipher import AES # 新增 AES 加密库
+from Crypto.Cipher import AES
 import secrets
 
 app = FastAPI()
@@ -35,7 +35,6 @@ def img_to_base64(img):
 
 # --- 工具函数：生成普通二维码 ---
 def generate_normal_qr_base64(text_data):
-    """用于生成装载 AES 密文的普通二维码"""
     qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
     qr.add_data(text_data)
     qr.make(fit=True)
@@ -44,11 +43,9 @@ def generate_normal_qr_base64(text_data):
 
 # --- 工具函数：AES-GCM 加解密 ---
 def encrypt_aes_gcm(plaintext: str, key_hex: str) -> str:
-    """使用 16 字符 (16字节) 的 hex 密钥加密数据"""
     key = key_hex.encode('utf-8')
     cipher = AES.new(key, AES.MODE_GCM)
     ciphertext, tag = cipher.encrypt_and_digest(plaintext.encode('utf-8'))
-    # 将 nonce, tag, ciphertext 打包为 JSON，方便前端直接扫码获取
     payload = {
         "n": base64.b64encode(cipher.nonce).decode('utf-8'),
         "t": base64.b64encode(tag).decode('utf-8'),
@@ -57,7 +54,6 @@ def encrypt_aes_gcm(plaintext: str, key_hex: str) -> str:
     return json.dumps(payload)
 
 def decrypt_aes_gcm(payload_json: str, key_hex: str) -> str:
-    """解析 JSON payload 并使用密钥解密"""
     data = json.loads(payload_json)
     nonce = base64.b64decode(data['n'])
     tag = base64.b64decode(data['t'])
@@ -69,7 +65,6 @@ def decrypt_aes_gcm(payload_json: str, key_hex: str) -> str:
 
 # --- 工具函数：添加对齐标记 ---
 def add_alignment_marks(img_array):
-    """Numpy 向量化添加十字准星对齐标记"""
     h, w = img_array.shape
     mark_size = 20
     thickness = 4
@@ -81,19 +76,11 @@ def add_alignment_marks(img_array):
 
 # --- 工具函数：生成净化后的预览图 ---
 def purify_image_for_preview(stacked_gray, scale=0.5):
-    """提取三步净化算法，专门用于生成前端预览图"""
-    # 1. INTER_AREA 逆向融合
     dim = (int(stacked_gray.shape[1] * scale), int(stacked_gray.shape[0] * scale))
     resized = cv2.resize(stacked_gray, dim, interpolation=cv2.INTER_AREA)
-    
-    # 2. 全局阈值二值化 (★ 核心修复：将 127 改为 100，完美解决舍入带来的噪点黑斑)
     _, thresh = cv2.threshold(resized, 100, 255, cv2.THRESH_BINARY)
-    
-    # 3. 形态学开运算
     kernel = np.ones((3,3), np.uint8)
     opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-    
-    # 转为 base64
     pil_img = Image.fromarray(opening, mode='L')
     return img_to_base64(pil_img)
     
@@ -121,7 +108,6 @@ def apply_visual_crypto(source_arr):
     full_a[padding:-padding, padding:-padding] = share_a_img
     full_b[padding:-padding, padding:-padding] = share_b_img
     
-    # 物理叠加等同于取矩阵最小值
     stacked = np.minimum(full_a, full_b)
     preview_clean_b64 = purify_image_for_preview(stacked)
     
@@ -140,19 +126,15 @@ def generate_visual_crypto_from_text(text_data):
 @app.post("/generate")
 async def generate(text: str = Form(...)):
     try:
-        # 1. 随机生成 16 位 AES 密钥 (8 bytes hex)
         aes_key = secrets.token_hex(8) 
-        
-        # 2. 数字信道：使用 AES 密钥加密用户的原始长文本
         encrypted_payload = encrypt_aes_gcm(text, aes_key)
         ciphertext_qr_b64 = generate_normal_qr_base64(encrypted_payload)
         
-        # 3. 物理信道：使用视觉密码仅仅加密这 16 位 AES 密钥
         img1, img2, preview_clean = generate_visual_crypto_from_text(aes_key)
         
         return {
             "status": "success", 
-            "ciphertext_qr": ciphertext_qr_b64, # 新增：给前端展示的密文二维码
+            "ciphertext_qr": ciphertext_qr_b64, 
             "share1": img_to_base64(img1), 
             "share2": img_to_base64(img2), 
             "previewClean": preview_clean
@@ -204,17 +186,25 @@ def try_decode(img_bgr):
         dim = (int(img_bgr.shape[1] * scale), int(img_bgr.shape[0] * scale))
         resized = cv2.resize(img_bgr, dim, interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        
+        # 核心修复 1：将阈值设为100（和加密端保持一致）减少黑斑噪点
         _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        value, _, _ = detect.detectAndDecode(thresh)
-        if value:
-            return value, thresh  
-
+        # 核心修复 2：无论如何先执行形态学开运算生成净化图像 (opening)
         kernel = np.ones((3,3), np.uint8)
         opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        
+        # 先尝试识别净化后的图像 (更符合人类视觉，通常也能成功)
         value_open, _, _ = detect.detectAndDecode(opening)
         if value_open:
             return value_open, opening 
+            
+        # 如果净化导致细节丢失识别失败，回退到带有噪点的 thresh 识别
+        value, _, _ = detect.detectAndDecode(thresh)
+        if value:
+            # 即使靠噪点图识别成功，返回给前端 UI 的也必须是净化版的图 opening
+            return value, opening 
+            
     return None, None
 
 @app.post("/decode")
