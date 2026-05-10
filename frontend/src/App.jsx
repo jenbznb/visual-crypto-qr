@@ -1,19 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, ShieldCheck, Download, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2 } from 'lucide-react';
-// 使用 CDN 导入以修复编译环境中的模块解析问题
+import { Layers, ShieldCheck, Download, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2, KeyRound, FileJson, Check } from 'lucide-react';
 import { Html5Qrcode } from 'https://esm.sh/html5-qrcode';
 
-/**
- * 核心工具函数
- */
+// --- 工具函数 ---
+const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
 
-// 将 DataURL 转换为 Blob 供后端接口使用
-const dataURLtoBlob = async (dataUrl) => {
-  const res = await fetch(dataUrl);
-  return await res.blob();
-};
-
-// 智能获取后端 API 地址
 const getApiUrl = (endpoint) => {
   const hostname = window.location.hostname;
   if (hostname.includes('localhost')) {
@@ -25,39 +16,28 @@ const getApiUrl = (endpoint) => {
   return `https://vc-api.115333.xyz${endpoint}`;
 };
 
-/**
- * App 主组件
- */
 export default function App() {
   const [activeTab, setActiveTab] = useState('encrypt');
 
   return (
-    <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-5xl mx-auto font-sans text-slate-100 pb-20">
+    <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-6xl mx-auto font-sans text-slate-100 pb-20">
       <header className="mb-8 text-center no-print">
         <h1 className="text-3xl md:text-5xl font-bold flex items-center justify-center gap-3 text-indigo-400 mb-2">
           <ShieldCheck size={40} className="md:w-12 md:h-12" />
-          Visual Crypto QR
+          VC Hybrid Crypto
         </h1>
-        <p className="text-slate-400 text-sm md:text-base">基于 Naor-Shamir (2,2) 视觉秘密共享算法</p>
+        <p className="text-slate-400 text-sm md:text-base">AES-GCM + Naor-Shamir (2,2) 混合加密网络架构</p>
       </header>
 
-      {/* 导航标签 */}
       <div className="flex p-1 bg-slate-800 rounded-xl mb-8 border border-slate-700 no-print">
-        <button 
-          onClick={() => setActiveTab('encrypt')} 
-          className={`flex items-center gap-2 px-6 py-2 rounded-lg transition-all ${activeTab === 'encrypt' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
-        >
-          <Lock size={18} /> 加密
+        <button onClick={() => setActiveTab('encrypt')} className={`flex items-center gap-2 px-6 py-2 rounded-lg transition-all ${activeTab === 'encrypt' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+          <Lock size={18} /> 混合加密
         </button>
-        <button 
-          onClick={() => setActiveTab('decrypt')} 
-          className={`flex items-center gap-2 px-6 py-2 rounded-lg transition-all ${activeTab === 'decrypt' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
-        >
-          <Unlock size={18} /> 解密
+        <button onClick={() => setActiveTab('decrypt')} className={`flex items-center gap-2 px-6 py-2 rounded-lg transition-all ${activeTab === 'decrypt' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}>
+          <Unlock size={18} /> 联合解密
         </button>
       </div>
 
-      {/* 视图切换 */}
       <div className="w-full animate-fade-in">
         {activeTab === 'encrypt' ? <EncryptView /> : <DecryptView />}
       </div>
@@ -65,198 +45,30 @@ export default function App() {
   );
 }
 
-// ================= 扫描模态框组件 =================
-function QrScannerModal({ onScanSuccess, onClose }) {
-  const html5QrCodeRef = useRef(null);
-
-  useEffect(() => {
-    const startScanner = async () => {
-      const html5QrCode = new Html5Qrcode("reader");
-      html5QrCodeRef.current = html5QrCode;
-
-      try {
-        const devices = await Html5Qrcode.getCameras();
-        if (devices && devices.length) {
-          // 优先选择后置摄像头
-          const rearCamera = devices.find(device => 
-            device.label.toLowerCase().includes('back') || 
-            device.label.toLowerCase().includes('rear') ||
-            device.label.toLowerCase().includes('environment')
-          );
-          const cameraId = rearCamera ? rearCamera.id : devices[devices.length - 1].id;
-
-          await html5QrCode.start(
-            cameraId,
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            (decodedText) => onScanSuccess(decodedText),
-            () => {} // 忽略扫描错误消息
-          );
-        } else {
-          alert("未找到可用的摄像头。");
-          onClose();
-        }
-      } catch (err) {
-        console.error("摄像头启动失败:", err);
-        alert("无法启动摄像头，请检查权限。");
-        onClose();
-      }
-    };
-
-    startScanner();
-
-    return () => {
-      if (html5QrCodeRef.current) {
-        html5QrCodeRef.current.stop().catch(err => console.error("停止扫描仪失败", err));
-      }
-    };
-  }, [onScanSuccess, onClose]);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
-      <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 overflow-hidden relative shadow-2xl">
-        <div className="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-800">
-          <h3 className="font-bold flex items-center gap-2 text-white"><ScanLine size={20}/> 扫描二维码</h3>
-          <button onClick={onClose}><X size={24} /></button>
-        </div>
-        <div className="p-4 bg-slate-900">
-          <div id="reader" style={{ width: '100%' }}></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ================= 识别结果弹窗 =================
-function ResultModal({ content, imgSrc, onClose }) {
-  const isUrl = content.startsWith('http://') || content.startsWith('https://');
-  const handleCopy = () => { 
-    navigator.clipboard.writeText(content); 
-    // 简单的模拟提示
-    const btn = document.getElementById('copy-btn');
-    if (btn) btn.innerText = '已复制！';
-    setTimeout(() => { if (btn) btn.innerText = '复制'; }, 2000);
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
-      <div className="bg-slate-900 w-full max-w-md rounded-2xl border border-slate-700 shadow-2xl p-6 transform transition-all scale-100">
-        <div className="flex justify-between items-start mb-4">
-          <h3 className="text-xl font-bold text-emerald-400 flex items-center gap-2"><CheckCircle2 size={24} /> 识别并净化成功</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
-        </div>
-        
-        {imgSrc && (
-          <div className="mb-4 flex flex-col items-center bg-white p-2 rounded-lg border border-slate-600">
-             <img src={imgSrc} className="max-h-48 object-contain pixelated-image" alt="Purified QR" />
-          </div>
-        )}
-
-        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6 break-words max-h-40 overflow-y-auto">
-          <p className="text-slate-200 font-mono text-sm">{content}</p>
-        </div>
-        <div className="flex gap-3">
-          {isUrl && (
-            <a href={content} target="_blank" rel="noopener noreferrer" className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors">
-              <ExternalLink size={18} /> 访问
-            </a>
-          )}
-          <button id="copy-btn" onClick={handleCopy} className={`flex-1 border border-slate-600 hover:bg-slate-700 text-white py-2 rounded-lg font-semibold flex items-center justify-center gap-2 transition-colors ${!isUrl ? 'w-full' : ''}`}>
-            <Copy size={18} /> 复制内容
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ================= 大图预览模态框 =================
-function ImagePreviewModal({ imgSrc, text, onClose }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 no-print" onClick={onClose}>
-      <div className="max-w-3xl w-full flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
-        <div className="relative bg-white p-2 rounded-lg shadow-2xl">
-           <img src={imgSrc} className="max-h-[70vh] w-auto rounded object-contain pixelated-image" />
-           <button onClick={onClose} className="absolute -top-12 right-0 p-2 text-white hover:text-slate-300"><X size={32}/></button>
-        </div>
-        {text && text !== "手动保存的图片" && (
-           <div className="bg-slate-800 p-4 rounded-xl border border-slate-700 w-full max-w-md">
-             <p className="text-slate-400 text-xs mb-1">包含内容:</p>
-             <p className="text-white font-mono text-sm break-all">{text}</p>
-           </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ================= 加密视图组件 =================
+// ================= EncryptView (阶段一：分离产物展示) =================
 function EncryptView() {
-  const [inputType, setInputType] = useState('text');
   const [inputText, setInputText] = useState(window.location.origin);
-  const [inputImage, setInputImage] = useState(null);
-  const [inputImagePreview, setInputImagePreview] = useState(null);
-
   const [loading, setLoading] = useState(false);
-  const [shares, setShares] = useState({ share1: null, share2: null, previewClean: null });
+  const [shares, setShares] = useState({ share1: null, share2: null, previewClean: null, ciphertextQr: null });
   const [isPreview, setIsPreview] = useState(false);
-  const [showScanner, setShowScanner] = useState(false);
-  const [history, setHistory] = useState([]); 
-  const canvasRef = useRef(null);
-  const MAX_LENGTH = 150; 
-
-  useEffect(() => {
-    const saved = localStorage.getItem('vc_history_encrypt');
-    if (saved) setHistory(JSON.parse(saved));
-  }, []);
-
-  const saveToHistory = (textOrType, s1, s2, previewClean) => {
-    const newItem = { id: Date.now(), text: textOrType, share1: s1, share2: s2, previewClean, date: new Date().toLocaleString() };
-    const newHistory = [newItem, ...history].slice(0, 5);
-    setHistory(newHistory);
-    localStorage.setItem('vc_history_encrypt', JSON.stringify(newHistory));
-  };
-
-  const deleteHistory = (id, e) => {
-    e.stopPropagation();
-    const newHistory = history.filter(item => item.id !== id);
-    setHistory(newHistory);
-    localStorage.setItem('vc_history_encrypt', JSON.stringify(newHistory));
-  };
-
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setInputImage(file);
-      const reader = new FileReader();
-      reader.onload = (event) => setInputImagePreview(event.target.result);
-      reader.readAsDataURL(file);
-    }
-  };
-
+  
   const handleGenerate = async () => {
-    setLoading(true); setShares({ share1: null, share2: null, previewClean: null }); setIsPreview(false);
+    if (!inputText) return;
+    setLoading(true); setShares({ share1: null, share2: null, previewClean: null, ciphertextQr: null }); setIsPreview(false);
     
     try {
-      let apiUrl, formData;
-
-      if (inputType === 'text') {
-        if (inputText.length > MAX_LENGTH) { alert(`文本过长！建议 ${MAX_LENGTH} 字符以内。`); setLoading(false); return; }
-        formData = new FormData();
-        formData.append('text', inputText);
-        apiUrl = getApiUrl('/generate');
-      } else {
-        if (!inputImage) { alert("请上传一张图片或二维码！"); setLoading(false); return; }
-        formData = new FormData();
-        formData.append('file', inputImage);
-        apiUrl = getApiUrl('/generate_image');
-      }
-
-      const response = await fetch(apiUrl, { method: 'POST', body: formData });
+      const formData = new FormData();
+      formData.append('text', inputText);
+      const response = await fetch(getApiUrl('/generate'), { method: 'POST', body: formData });
       const data = await response.json();
       
-      if (data.status === 'success' || data.share1) {
-        setShares({ share1: data.share1, share2: data.share2, previewClean: data.previewClean });
-        saveToHistory(inputType === 'text' ? inputText : "[加密图片]", data.share1, data.share2, data.previewClean);
+      if (data.status === 'success') {
+        setShares({ 
+          share1: data.share1, 
+          share2: data.share2, 
+          previewClean: data.previewClean,
+          ciphertextQr: data.ciphertext_qr 
+        });
       } else { 
         alert('错误: ' + data.error); 
       }
@@ -267,170 +79,99 @@ function EncryptView() {
     }
   };
 
-  const handlePrint = () => { setIsPreview(false); setTimeout(() => window.print(), 100); };
-  
-  const handleDownloadCombined = () => {
-    if (shares.previewClean) {
-        const link = document.createElement('a'); 
-        link.download = 'combined_result.png';
-        link.href = shares.previewClean; 
-        link.click();
-        return;
-    }
-    // 回退方案：使用 Canvas 合成（如果不提供 previewClean）
-    if (!shares.share1) return;
-    const ctx = canvasRef.current.getContext('2d');
-    const i1 = new Image(); i1.src = shares.share1;
-    const i2 = new Image(); i2.src = shares.share2;
-    i1.onload = () => {
-      canvasRef.current.width = i1.width; canvasRef.current.height = i1.height;
-      ctx.drawImage(i1, 0, 0);
-      i2.onload = () => {
-        ctx.globalCompositeOperation = 'multiply'; ctx.drawImage(i2, 0, 0);
-        const link = document.createElement('a'); link.download = 'combined.png';
-        link.href = canvasRef.current.toDataURL('image/png'); link.click();
-        ctx.globalCompositeOperation = 'source-over';
-      };
-    };
+  const downloadImage = (url, filename) => {
+    const link = document.createElement('a'); 
+    link.download = filename; link.href = url; link.click();
   };
 
   return (
     <div className="flex flex-col gap-8">
-      {showScanner && <QrScannerModal onClose={() => setShowScanner(false)} onScanSuccess={(t) => {setInputText(t); setInputType('text'); setShowScanner(false);}} />}
-      
+      {/* 步骤 1：输入数据 */}
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl no-print">
-        <div className="flex gap-4 mb-6 border-b border-slate-700 pb-2">
-          <button onClick={() => setInputType('text')} className={`text-sm font-bold pb-2 border-b-2 transition-all ${inputType === 'text' ? 'text-indigo-400 border-indigo-400' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>文本内容</button>
-          <button onClick={() => setInputType('image')} className={`text-sm font-bold pb-2 border-b-2 transition-all ${inputType === 'image' ? 'text-indigo-400 border-indigo-400' : 'text-slate-500 border-transparent hover:text-slate-300'}`}>现有图片</button>
-        </div>
-
+        <h3 className="text-lg font-bold mb-4 text-indigo-400 flex items-center gap-2">1. 输入原始机密</h3>
         <div className="flex flex-col gap-4">
-          {inputType === 'text' ? (
-             <div className="flex gap-2">
-               <input value={inputText} onChange={(e) => setInputText(e.target.value)} className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500" placeholder="在此输入要加密的内容..." />
-               <button onClick={() => setShowScanner(true)} className="bg-slate-700 px-3 rounded-lg border border-slate-600 hover:bg-slate-600 text-indigo-400"><ScanLine size={20} /></button>
-             </div>
-          ) : (
-             <div className="flex items-center gap-4">
-                <input type="file" id="encryptImageInput" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                <label htmlFor="encryptImageInput" className="flex-1 border-2 border-dashed border-slate-600 hover:border-indigo-400 bg-slate-900 hover:bg-slate-800 rounded-lg h-24 flex flex-col items-center justify-center cursor-pointer transition-all text-slate-400">
-                  <ImageIcon size={24} className="mb-1" />
-                  <span className="text-sm">点击上传要加密的图片</span>
-                </label>
-                {inputImagePreview && (
-                  <div className="w-24 h-24 bg-white rounded-lg p-1 border border-slate-600 flex-shrink-0">
-                    <img src={inputImagePreview} className="w-full h-full object-contain" alt="Upload preview" />
-                  </div>
-                )}
-             </div>
-          )}
-
-          <button onClick={handleGenerate} disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-600 px-8 py-3 rounded-lg font-bold text-white transition-all shadow-lg flex items-center justify-center gap-2">
-            {loading ? <Loader2 className="animate-spin" size={20} /> : '生成秘密分片'}
+           <textarea 
+             value={inputText} 
+             onChange={(e) => setInputText(e.target.value)} 
+             className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-indigo-500 min-h-[100px]" 
+             placeholder="输入任意长度的机密文本、JSON或代码..." 
+           />
+          <button onClick={handleGenerate} disabled={loading || !inputText} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-600 px-8 py-3 rounded-lg font-bold text-white transition-all shadow-lg flex items-center justify-center gap-2">
+            {loading ? <Loader2 className="animate-spin" size={20} /> : '执行 AES+VC 混合加密'}
           </button>
         </div>
       </div>
 
+      {/* 步骤 2：输出分离物 */}
       {shares.share1 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 animate-fade-in">
-          <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300"><Layers size={20} /> 操作面板</h3>
-            <div className="space-y-3">
-              <button onClick={() => setIsPreview(!isPreview)} className={`w-full py-3 rounded-lg font-semibold border flex justify-center items-center gap-2 transition-all ${isPreview ? 'bg-amber-500/20 text-amber-400 border-amber-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
-                {isPreview ? <><Layers size={18} /> 返回图层</> : <><Search size={18} /> 预览净化效果</>}
-              </button>
-              
-              <div className="grid grid-cols-2 gap-2 pt-4 border-t border-slate-700">
-                 <a href={shares.share1} download="Layer_A.png" className="btn-secondary"><Download size={14}/> 下载图层 A</a>
-                 <a href={shares.share2} download="Layer_B.png" className="btn-secondary"><Download size={14}/> 下载图层 B</a>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                 <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 下载净化图</button>
-                 <button onClick={handlePrint} className="btn-secondary hover:text-indigo-400 hover:border-indigo-500"><Printer size={14} /> 打印分片</button>
-              </div>
-            </div>
-          </div>
-          
-          <div id="printable-section" className="relative bg-slate-900 rounded-xl p-4 flex flex-col items-center justify-center min-h-[400px] border border-slate-600 shadow-2xl overflow-hidden select-none">
-            {!isPreview ? (
-              <div className="flex flex-col md:flex-row gap-6 items-center justify-center w-full print:static">
-                <div className="flex flex-col items-center">
-                  <span className="mb-2 px-3 py-1 bg-slate-800 text-slate-300 rounded text-sm font-bold shadow">分片 A</span>
-                  <img src={shares.share1} className="max-w-[200px] w-full bg-white pixelated-image shadow-lg" alt="Share A" />
+        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in no-print">
+            <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-indigo-300">2. 分发安全凭证</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                
+                {/* 产物 A: 密文载体 */}
+                <div className="bg-slate-900 p-4 rounded-xl border border-slate-700 flex flex-col items-center shadow-inner">
+                    <span className="mb-2 px-3 py-1 bg-indigo-900 text-indigo-300 rounded-full text-xs font-bold border border-indigo-700 flex items-center gap-1"><FileJson size={14}/> AES 密文载体</span>
+                    <p className="text-xs text-slate-500 mb-4 text-center">可安全地在公开信道(如微信、网站)传输。没有物理密钥无法解密。</p>
+                    <img src={shares.ciphertextQr} className="max-w-[200px] w-full bg-white shadow-md rounded mb-4" alt="Ciphertext QR" />
+                    <button onClick={() => downloadImage(shares.ciphertextQr, "AES_Payload.png")} className="btn-secondary w-full"><Download size={14}/> 下载密文二维码</button>
                 </div>
-                <div className="hidden md:block text-slate-600"><Move size={32} /></div>
-                <div className="flex flex-col items-center">
-                  <span className="mb-2 px-3 py-1 bg-slate-800 text-slate-300 rounded text-sm font-bold shadow">分片 B</span>
-                  <img src={shares.share2} className="max-w-[200px] w-full bg-white pixelated-image shadow-lg" alt="Share B" />
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center w-full">
-                 {shares.previewClean && (
-                   <img src={shares.previewClean} className="max-w-[250px] md:max-w-[300px] w-full bg-white pixelated-image shadow-2xl rounded" alt="Preview" />
-                 )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
-      {history.length > 0 && (
-        <div className="w-full mt-8 bg-slate-800 p-6 rounded-xl border border-slate-700 no-print animate-fade-in">
-          <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-indigo-300"><History size={20}/> 历史生成记录</h3>
-          <div className="space-y-3">
-            {history.map(item => (
-              <div 
-                key={item.id} 
-                className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-indigo-500 cursor-pointer transition-all"
-                onClick={() => setShares({ share1: item.share1, share2: item.share2, previewClean: item.previewClean || null })}
-              >
-                <img src={item.share1} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" alt="History thumb" />
-                <div className="flex-1 overflow-hidden flex flex-col justify-center">
-                  <p className="text-sm text-white truncate font-mono">{item.text}</p>
-                  <p className="text-xs text-slate-500">{item.date}</p>
+                {/* 产物 B/C: 物理钥匙 */}
+                <div className="md:col-span-2 bg-slate-900 p-4 rounded-xl border border-slate-700 shadow-inner flex flex-col">
+                     <span className="mb-2 px-3 py-1 bg-emerald-900 text-emerald-300 rounded-full text-xs font-bold border border-emerald-700 self-center flex items-center gap-1"><KeyRound size={14}/> 物理分解密钥 (VC Shares)</span>
+                     <p className="text-xs text-slate-500 mb-4 text-center">包含解密密文所需的 16 位 AES 密钥。必须通过分离的安全信道（如打印、物理信件、不同APP）分发。</p>
+                     
+                     <div className="flex-1 flex flex-col md:flex-row items-center justify-center gap-6 mb-4 relative min-h-[200px]">
+                         {!isPreview ? (
+                            <>
+                              <div className="flex flex-col items-center">
+                                 <img src={shares.share1} className="max-w-[180px] w-full bg-white pixelated-image shadow-lg" alt="Share A" />
+                                 <button onClick={() => downloadImage(shares.share1, "VC_Share_A.png")} className="mt-2 text-xs text-slate-400 hover:text-white flex items-center gap-1"><Download size={12}/> 下载 分片 A</button>
+                              </div>
+                              <div className="flex flex-col items-center">
+                                 <img src={shares.share2} className="max-w-[180px] w-full bg-white pixelated-image shadow-lg" alt="Share B" />
+                                 <button onClick={() => downloadImage(shares.share2, "VC_Share_B.png")} className="mt-2 text-xs text-slate-400 hover:text-white flex items-center gap-1"><Download size={12}/> 下载 分片 B</button>
+                              </div>
+                            </>
+                         ) : (
+                            <div className="flex flex-col items-center">
+                               <img src={shares.previewClean} className="max-w-[200px] w-full bg-white pixelated-image shadow-2xl rounded" alt="Preview" />
+                               <span className="mt-2 text-xs text-emerald-400 font-mono">16-bit Key Generated</span>
+                            </div>
+                         )}
+                     </div>
+
+                     <button onClick={() => setIsPreview(!isPreview)} className="btn-secondary w-full mt-auto">
+                        {isPreview ? <Layers size={14} /> : <Search size={14} />} 
+                        {isPreview ? '关闭净化对齐预览' : '预览密钥对齐效果'}
+                     </button>
                 </div>
-                <button onClick={(e) => deleteHistory(item.id, e)} className="p-2 text-slate-500 hover:text-red-400"><Trash2 size={16}/></button>
-              </div>
-            ))}
-          </div>
+            </div>
         </div>
       )}
-      <canvas ref={canvasRef} className="hidden" />
     </div>
   );
 }
 
-// ================= 解密视图组件 =================
+// ================= DecryptView (阶段一：双因子联合解密) =================
 function DecryptView() {
+  // VC 分片状态 (物理密钥)
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [scanResult, setScanResult] = useState(null); 
-  const [isScanning, setIsScanning] = useState(false);
-  const [decryptHistory, setDecryptHistory] = useState([]);
-  const [previewItem, setPreviewItem] = useState(null);
-  const [purifiedImg, setPurifiedImg] = useState(null);
+  const [isScanningKey, setIsScanningKey] = useState(false);
+  const [aesKey, setAesKey] = useState(null);
 
-  useEffect(() => {
-    const saved = localStorage.getItem('vc_history_decrypt');
-    if (saved) setDecryptHistory(JSON.parse(saved));
-  }, []);
+  // Payload 密文状态
+  const [payloadImg, setPayloadImg] = useState(null);
+  const [isScanningPayload, setIsScanningPayload] = useState(false);
+  const [cipherPayload, setCipherPayload] = useState(null);
 
-  const saveToDecryptHistory = (text, combinedImg) => {
-    const newItem = { id: Date.now(), text, img: combinedImg, date: new Date().toLocaleString() };
-    const newHistory = [newItem, ...decryptHistory].slice(0, 5);
-    setDecryptHistory(newHistory);
-    localStorage.setItem('vc_history_decrypt', JSON.stringify(newHistory));
-  };
+  // 终极解密状态
+  const [isDecrypting, setIsDecrypting] = useState(false);
+  const [finalResult, setFinalResult] = useState(null);
 
-  const deleteDecryptHistory = (id) => {
-    const newHistory = decryptHistory.filter(item => item.id !== id);
-    setDecryptHistory(newHistory);
-    localStorage.setItem('vc_history_decrypt', JSON.stringify(newHistory));
-  };
-
-  // 核心优化：直接读取文件原始 DataURL，坚决不使用 Canvas 缩放，防止像素对齐失效
+  // --- 处理文件上传 (绝不缩放) ---
   const handleUpload = (e, setImgState) => {
     const file = e.target.files[0];
     if (file) {
@@ -442,178 +183,206 @@ function DecryptView() {
 
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
-  const generateCompositeBlob = async () => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    
-    // 强制禁用平滑，确保每个秘密像素的边界清晰
-    ctx.imageSmoothingEnabled = false;
-    ctx.webkitImageSmoothingEnabled = false;
-    ctx.mozImageSmoothingEnabled = false;
-
-    const image1 = new Image();
-    const image2 = new Image();
-    const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
-    await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
-    
-    // 使用原图尺寸，坚决不拉伸
-    canvas.width = image1.width; 
-    canvas.height = image1.height;
-    ctx.fillStyle = "white"; 
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    ctx.drawImage(image1, 0, 0);
-    
-    // 模拟物理叠加效果（Multiply）
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.drawImage(image2, offset.x, offset.y);
-    ctx.globalCompositeOperation = 'source-over';
-    
-    const rawUrl = canvas.toDataURL("image/png");
-    
-    return new Promise(resolve => {
-        canvas.toBlob(blob => {
-            resolve({ blob, rawUrl });
-        }, 'image/png');
-    });
+  // --- Step 1: 解析载体密文二维码 ---
+  const handleExtractPayload = async () => {
+      if (!payloadImg) return;
+      setIsScanningPayload(true);
+      try {
+          const blob = await dataURLtoBlob(payloadImg);
+          const formData = new FormData();
+          formData.append('file', blob, 'payload.png');
+          
+          const response = await fetch(getApiUrl('/decode_normal_qr'), { method: 'POST', body: formData });
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+              setCipherPayload(data.content);
+          } else {
+              alert(data.error);
+          }
+      } catch (err) {
+          alert("提取密文时发生网络错误");
+      } finally {
+          setIsScanningPayload(false);
+      }
   };
 
-  const handleScanContent = async () => {
+  // --- Step 2: 提取 VC 物理密钥 ---
+  const handleExtractKey = async () => {
     if (!imgA || !imgB) return;
-    setIsScanning(true);
-    let currentRawUrl = "";
-
+    setIsScanningKey(true);
     try {
-      const { blob, rawUrl } = await generateCompositeBlob();
-      currentRawUrl = rawUrl;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = false;
 
+      const image1 = new Image(); const image2 = new Image();
+      const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
+      await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
+      
+      canvas.width = image1.width; canvas.height = image1.height;
+      ctx.fillStyle = "white"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image1, 0, 0);
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.drawImage(image2, offset.x, offset.y);
+      
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const formData = new FormData();
       formData.append('file', blob, 'composite.png');
 
-      const apiUrl = getApiUrl('/decode');
-      const response = await fetch(apiUrl, { method: 'POST', body: formData });
+      const response = await fetch(getApiUrl('/decode'), { method: 'POST', body: formData });
       const data = await response.json();
 
       if (data.status === 'success') {
-        setScanResult(data.content);
-        setPurifiedImg(data.cleanImage); 
-        saveToDecryptHistory(data.content, data.cleanImage || rawUrl);
+        setAesKey(data.content);
       } else {
-        throw new Error(data.error || "识别失败");
+        alert(data.error || "提取物理密钥失败，请微调对齐。");
       }
     } catch (err) {
-      if(confirm("无法自动识别。是否要将当前对齐的图片保存到历史记录中手动查看？")) {
-        saveToDecryptHistory("手动对齐记录", currentRawUrl);
-      }
+      alert("网络连接异常");
     } finally {
-      setIsScanning(false);
+      setIsScanningKey(false);
     }
   };
 
-  const renderUploadButton = (label, imgState, setImgState, id) => (
-    <div className="flex flex-col gap-1 flex-1">
-      <label className="text-xs text-slate-500 font-bold uppercase">{label}</label>
+  // --- Step 3: 联合解密 ---
+  const handleFinalDecrypt = async () => {
+      if (!cipherPayload || !aesKey) return;
+      setIsDecrypting(true);
+      try {
+          const formData = new FormData();
+          formData.append('payload', cipherPayload);
+          formData.append('key', aesKey);
+          
+          const response = await fetch(getApiUrl('/decrypt_payload'), { method: 'POST', body: formData });
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+              setFinalResult(data.content);
+          } else {
+              alert(data.error || "解密失败，密钥或密文损坏。");
+          }
+      } catch (e) {
+          alert("网络连接异常");
+      } finally {
+          setIsDecrypting(false);
+      }
+  };
+
+  const renderUploadBox = (label, imgState, setImgState, id) => (
+    <div className="flex-1">
       <div className="relative">
         <input type="file" accept="image/*" onChange={(e) => handleUpload(e, setImgState)} className="hidden" id={id} />
-        <label htmlFor={id} className={`flex flex-col items-center justify-center gap-2 w-full h-24 border-2 border-dashed rounded-lg cursor-pointer transition-all ${imgState ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-slate-600 hover:border-indigo-400 hover:bg-slate-700 text-slate-400'}`}>
-           {imgState ? <><CheckCircle2 size={24} /><span className="text-xs">图层就绪</span></> : <><Camera size={24} /><span className="text-xs">加载图层</span></>}
+        <label htmlFor={id} className={`flex flex-col items-center justify-center gap-1 w-full h-20 border-2 border-dashed rounded-lg cursor-pointer transition-all ${imgState ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-slate-600 hover:border-indigo-400 hover:bg-slate-700 text-slate-400'}`}>
+           {imgState ? <><Check size={18} /><span className="text-[10px]">{label}就绪</span></> : <><Camera size={18} /><span className="text-[10px]">加载 {label}</span></>}
         </label>
       </div>
     </div>
   );
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 no-print">
-      {scanResult && <ResultModal content={scanResult} imgSrc={purifiedImg} onClose={() => setScanResult(null)} />}
-      {previewItem && <ImagePreviewModal imgSrc={previewItem.img} text={previewItem.text} onClose={() => setPreviewItem(null)} />}
-
-      {/* 控制侧栏 */}
-      <div className="lg:col-span-1 space-y-4">
-        <div className="bg-slate-800 p-6 rounded-xl border border-slate-700">
-          <h3 className="text-lg font-bold mb-4 text-emerald-400 flex items-center gap-2"><Camera size={20}/> 1. 上传分片</h3>
-          <div className="flex gap-4">{renderUploadButton("分片 A", imgA, setImgA, "fileA")}{renderUploadButton("分片 B", imgB, setImgB, "fileB")}</div>
-        </div>
-
-        {imgA && imgB && (
-          <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in">
-             <h3 className="text-lg font-bold mb-4 text-emerald-400 flex items-center gap-2"><Move size={18} /> 2. 对齐识别</h3>
-             <div className="grid grid-cols-3 gap-2 w-32 mx-auto mb-4">
-                <div /><button onClick={() => move(0, -1)} className="ctrl-btn">↑</button><div />
-                <button onClick={() => move(-1, 0)} className="ctrl-btn">←</button>
-                <button onClick={() => setOffset({x:0, y:0})} className="ctrl-btn text-xs">●</button>
-                <button onClick={() => move(1, 0)} className="ctrl-btn">→</button>
-                <div /><button onClick={() => move(0, 1)} className="ctrl-btn">↓</button><div />
-             </div>
-             <button 
-               onClick={handleScanContent} 
-               disabled={isScanning}
-               className="w-full py-3 rounded-lg font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2 transition-all shadow-lg"
-             >
-               {isScanning ? <Loader2 className="animate-spin" size={20} /> : <><Search size={18} /> 智能净化识别</>}
-             </button>
-          </div>
-        )}
-      </div>
-
-      {/* 预览主区 */}
-      <div className="lg:col-span-2 space-y-8">
-        <div className="bg-slate-900 rounded-xl p-4 border border-slate-700 flex flex-col items-center justify-center min-h-[450px]">
-          {!imgA || !imgB ? (
-             <div className="text-slate-500 flex flex-col items-center text-center p-8">
-               <Layers size={48} className="mb-4 opacity-50" />
-               <p className="font-bold">等待图层上传...</p>
-               <p className="text-sm opacity-60 mt-2 max-w-xs">请分别上传加密生成的两张分片图片，然后使用方向键微调对齐。</p>
-             </div>
-          ) : purifiedImg ? (
-             <div className="relative bg-white w-full h-full min-h-[450px] rounded flex flex-col items-center justify-center overflow-hidden p-6 animate-fade-in">
-                <span className="absolute top-4 px-4 py-2 bg-emerald-600/10 text-emerald-600 rounded-lg text-sm font-bold border border-emerald-500/30 z-30 shadow-sm">✨ 智能识别净化预览</span>
-                <img src={purifiedImg} className="relative z-10 pixelated-image max-w-[300px] md:max-w-[400px] object-contain shadow-2xl" alt="Purified result" />
-                <button onClick={() => setPurifiedImg(null)} className="absolute bottom-6 px-8 py-2 bg-slate-800 text-white hover:bg-slate-700 rounded-lg shadow-lg z-30 transition-all font-bold">重新对齐</button>
-             </div>
-          ) : (
-            <div className="relative bg-white w-full h-full min-h-[450px] rounded flex items-center justify-center overflow-hidden shadow-inner">
-               <div className="relative">
-                 {/* 对齐标尺辅助线（模拟） */}
-                 <div className="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center border border-indigo-500 z-0" />
-                 
-                 <img src={imgA} className="relative z-10 pixelated-image mix-blend-multiply opacity-80 max-w-[320px] md:max-w-[420px]" alt="Overlay A" />
-                 <img 
-                   src={imgB} 
-                   className="absolute top-0 left-0 z-20 pixelated-image mix-blend-multiply opacity-80 transition-transform duration-75 max-w-[320px] md:max-w-[420px]" 
-                   style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
-                   alt="Overlay B" 
-                 />
-               </div>
-            </div>
-          )}
-        </div>
-
-        {/* 解密历史记录 */}
-        {decryptHistory.length > 0 && (
-          <div className="w-full bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in no-print">
-            <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-400"><History size={20}/> 识别历史记录</h3>
-            <div className="space-y-3">
-              {decryptHistory.map(item => (
-                <div 
-                  key={item.id} 
-                  className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-emerald-500 cursor-pointer transition-all items-center"
-                  onClick={() => setPreviewItem(item)}
-                >
-                  <img src={item.img} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" alt="History thumb" />
-                  <div className="flex-1 overflow-hidden">
-                    <p className="text-sm text-white truncate font-mono">{item.text}</p>
-                    <p className="text-xs text-slate-500">{item.date}</p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                     <button onClick={(e) => {e.stopPropagation(); setPreviewItem(item)}} className="p-2 text-slate-400 hover:text-white" title="预览大图"><ImageIcon size={16}/></button>
-                     <button onClick={(e) => {e.stopPropagation(); deleteDecryptHistory(item.id)}} className="p-2 text-slate-500 hover:text-red-400" title="删除"><Trash2 size={16}/></button>
-                  </div>
+    <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
+      
+      {/* 结果展示 Modal */}
+      {finalResult && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 no-print">
+            <div className="bg-slate-900 w-full max-w-lg rounded-2xl border border-emerald-500 shadow-2xl shadow-emerald-500/20 p-6">
+                <div className="flex justify-between items-start mb-6 border-b border-slate-700 pb-4">
+                  <h3 className="text-2xl font-bold text-emerald-400 flex items-center gap-2"><Unlock size={28} /> 解密成功</h3>
+                  <button onClick={() => setFinalResult(null)} className="text-slate-400 hover:text-white"><X size={24} /></button>
                 </div>
-              ))}
+                <div className="bg-slate-800 p-4 rounded-lg border border-slate-700 mb-6 max-h-60 overflow-y-auto custom-scrollbar">
+                  <p className="text-white font-mono text-sm whitespace-pre-wrap break-all">{finalResult}</p>
+                </div>
+                <button onClick={() => {navigator.clipboard.writeText(finalResult); alert("已复制")}} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2">
+                   <Copy size={18} /> 复制机密信息
+                </button>
             </div>
           </div>
-        )}
+      )}
+
+      {/* 第一阶段：获取载体 */}
+      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row gap-6 items-center">
+         <div className="w-full md:w-1/3 flex flex-col gap-2 border-r border-slate-700 pr-4">
+             <h3 className="text-lg font-bold text-indigo-400 flex items-center gap-2"><FileJson size={20}/> 1. 提取密文</h3>
+             <p className="text-xs text-slate-400">上传公开的 AES 密文二维码</p>
+         </div>
+         <div className="w-full md:w-2/3 flex items-center gap-4">
+             {renderUploadBox("密文二维码", payloadImg, setPayloadImg, "payloadInput")}
+             <button onClick={handleExtractPayload} disabled={!payloadImg || isScanningPayload || cipherPayload} className={`py-3 px-6 rounded-lg font-bold flex items-center gap-2 transition-all flex-1 justify-center ${cipherPayload ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-700'}`}>
+                 {isScanningPayload ? <Loader2 className="animate-spin" size={18} /> : cipherPayload ? <><CheckCircle2 size={18}/> 密文已就绪</> : '提取密文载荷'}
+             </button>
+         </div>
       </div>
+
+      {/* 第二阶段：提取密钥 */}
+      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row gap-6">
+         <div className="w-full md:w-1/3 flex flex-col gap-2 border-b md:border-b-0 md:border-r border-slate-700 pr-4 pb-4 md:pb-0">
+             <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2"><KeyRound size={20}/> 2. 提取密钥</h3>
+             <p className="text-xs text-slate-400 mb-2">叠合分片并提取 16 位 AES 密钥</p>
+             <div className="flex gap-2 w-full">{renderUploadBox("分片A", imgA, setImgA, "keyA")}{renderUploadBox("分片B", imgB, setImgB, "keyB")}</div>
+             {imgA && imgB && !aesKey && (
+                <div className="grid grid-cols-3 gap-1 w-24 mx-auto mt-4">
+                    <div /><button onClick={() => move(0, -1)} className="ctrl-btn py-1 text-xs">↑</button><div />
+                    <button onClick={() => move(-1, 0)} className="ctrl-btn py-1 text-xs">←</button>
+                    <button onClick={() => setOffset({x:0, y:0})} className="ctrl-btn py-1 text-[10px]">●</button>
+                    <button onClick={() => move(1, 0)} className="ctrl-btn py-1 text-xs">→</button>
+                    <div /><button onClick={() => move(0, 1)} className="ctrl-btn py-1 text-xs">↓</button><div />
+                </div>
+             )}
+         </div>
+         <div className="w-full md:w-2/3 flex flex-col items-center justify-center gap-4 relative min-h-[200px] bg-slate-900 rounded-lg border border-slate-700 overflow-hidden">
+             {aesKey ? (
+                 <div className="flex flex-col items-center text-emerald-400 animate-fade-in">
+                    <CheckCircle2 size={48} className="mb-2" />
+                    <span className="font-bold text-lg">物理密钥提取成功</span>
+                    <span className="font-mono text-xs opacity-50 mt-1">Key Matrix Locked</span>
+                 </div>
+             ) : imgA && imgB ? (
+                <div className="relative flex items-center justify-center w-full h-full p-4">
+                    <img src={imgA} className="absolute z-10 pixelated-image mix-blend-multiply opacity-80 max-h-[180px]" alt="A" />
+                    <img src={imgB} className="absolute z-20 pixelated-image mix-blend-multiply opacity-80 transition-transform duration-75 max-h-[180px]" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }} alt="B" />
+                </div>
+             ) : (
+                <span className="text-slate-500 text-sm">等待分片...</span>
+             )}
+             
+             {imgA && imgB && !aesKey && (
+                 <button onClick={handleExtractKey} disabled={isScanningKey} className="absolute bottom-4 right-4 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2">
+                     {isScanningKey ? <Loader2 className="animate-spin" size={16}/> : '合成并提取密钥'}
+                 </button>
+             )}
+         </div>
+      </div>
+
+      {/* 第三阶段：联合解密 (The Vault) */}
+      <div className={`p-6 rounded-xl border flex flex-col items-center justify-center text-center transition-all duration-500 ${cipherPayload && aesKey ? 'bg-gradient-to-r from-indigo-900/50 to-emerald-900/50 border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.2)]' : 'bg-slate-900 border-slate-700'}`}>
+         <Unlock size={32} className={`mb-4 transition-all duration-500 ${cipherPayload && aesKey ? 'text-emerald-400' : 'text-slate-600'}`} />
+         <h3 className="text-xl font-bold mb-6 text-white">3. 双因子联合解密</h3>
+         
+         <div className="flex items-center justify-center gap-4 mb-8 w-full max-w-md">
+            <div className={`flex-1 flex flex-col items-center p-3 rounded-lg border ${cipherPayload ? 'bg-indigo-900/30 border-indigo-500 text-indigo-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+               <FileJson size={24} className="mb-2"/>
+               <span className="text-xs font-bold">密文载荷</span>
+               <span className="text-[10px] mt-1">{cipherPayload ? '已就绪' : '缺失'}</span>
+            </div>
+            <div className={`text-2xl ${cipherPayload && aesKey ? 'text-emerald-400' : 'text-slate-600'}`}>+</div>
+            <div className={`flex-1 flex flex-col items-center p-3 rounded-lg border ${aesKey ? 'bg-emerald-900/30 border-emerald-500 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-500'}`}>
+               <KeyRound size={24} className="mb-2"/>
+               <span className="text-xs font-bold">物理密钥</span>
+               <span className="text-[10px] mt-1">{aesKey ? '已就绪' : '缺失'}</span>
+            </div>
+         </div>
+
+         <button 
+           onClick={handleFinalDecrypt} 
+           disabled={!cipherPayload || !aesKey || isDecrypting}
+           className="w-full max-w-md bg-white text-slate-900 hover:bg-emerald-50 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 py-4 rounded-xl font-black text-lg transition-all shadow-xl disabled:shadow-none flex items-center justify-center gap-2"
+         >
+           {isDecrypting ? <Loader2 className="animate-spin" size={24} /> : '执行解密协议'}
+         </button>
+      </div>
+
     </div>
   );
 }
