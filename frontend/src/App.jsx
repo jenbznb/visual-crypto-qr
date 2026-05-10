@@ -211,8 +211,9 @@ function EncryptView() {
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
-  const saveToHistory = (textOrType, s1, s2) => {
-    const newItem = { id: Date.now(), text: textOrType, share1: s1, share2: s2, date: new Date().toLocaleString() };
+  // 核心修复 1：将 previewClean 也保存到历史记录中
+  const saveToHistory = (textOrType, s1, s2, previewClean) => {
+    const newItem = { id: Date.now(), text: textOrType, share1: s1, share2: s2, previewClean, date: new Date().toLocaleString() };
     const newHistory = [newItem, ...history].slice(0, 5);
     setHistory(newHistory);
     localStorage.setItem('vc_history_encrypt', JSON.stringify(newHistory));
@@ -258,7 +259,8 @@ function EncryptView() {
       
       if (data.status === 'success' || data.share1) {
         setShares({ share1: data.share1, share2: data.share2, previewClean: data.previewClean });
-        saveToHistory(inputType === 'text' ? inputText : "[加密图片]", data.share1, data.share2);
+        // 核心修复 2：保存历史时传入 data.previewClean
+        saveToHistory(inputType === 'text' ? inputText : "[加密图片]", data.share1, data.share2, data.previewClean);
       } else { 
         alert('Error: ' + data.error); 
       }
@@ -347,7 +349,6 @@ function EncryptView() {
           <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 h-fit no-print">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-indigo-300"><Layers size={20} /> 分发与控制</h3>
             <div className="space-y-3">
-              {/* ★ 修改：去掉了净化字眼 */}
               <button onClick={() => setIsPreview(!isPreview)} className={`w-full py-3 rounded-lg font-semibold border flex justify-center items-center gap-2 transition-all ${isPreview ? 'bg-amber-500/20 text-amber-400 border-amber-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'}`}>
                 {isPreview ? <><Layers size={18} /> 关闭预览</> : <><Search size={18} /> 预览效果</>}
               </button>
@@ -357,7 +358,6 @@ function EncryptView() {
                  <a href={shares.share2} download="Share_B.png" className="btn-secondary"><Download size={14}/> 下载图层 B</a>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                 {/* ★ 修改：去掉了净化版字眼 */}
                  <button onClick={handleDownloadCombined} className="btn-secondary hover:text-emerald-400 hover:border-emerald-500"><CheckCircle2 size={14} /> 合成下载</button>
                  <button onClick={handlePrint} className="btn-secondary hover:text-indigo-400 hover:border-indigo-500"><Printer size={14} /> 打印图纸</button>
               </div>
@@ -382,7 +382,6 @@ function EncryptView() {
               </div>
             ) : (
               <div className="flex flex-col items-center w-full">
-                 {/* ★ 修改：去掉了预览图上方的绿色方块，直接展示图片 */}
                  {shares.previewClean ? (
                    <img src={shares.previewClean} className="max-w-[250px] md:max-w-[300px] w-full bg-white pixelated-image shadow-2xl rounded" />
                  ) : (
@@ -405,7 +404,8 @@ function EncryptView() {
               <div 
                 key={item.id} 
                 className="flex gap-4 p-3 bg-slate-900 rounded-lg border border-slate-700 hover:border-indigo-500 cursor-pointer transition-all"
-                onClick={() => setShares({ share1: item.share1, share2: item.share2, previewClean: null })}
+                // 核心修复 3：点击历史记录时，如果存在 previewClean，重新赋值回去
+                onClick={() => setShares({ share1: item.share1, share2: item.share2, previewClean: item.previewClean || null })}
               >
                 <img src={item.share1} className="w-12 h-12 object-cover rounded bg-white border border-slate-600" />
                 <div className="flex-1 overflow-hidden flex flex-col justify-center">
