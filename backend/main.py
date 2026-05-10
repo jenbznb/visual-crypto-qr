@@ -35,7 +35,8 @@ def img_to_base64(img):
 
 # --- 工具函数：生成普通二维码 ---
 def generate_normal_qr_base64(text_data):
-    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_L, box_size=10, border=4)
+    # AES 密文 JSON 较长，使用 M 级纠错
+    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=4)
     qr.add_data(text_data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
@@ -80,7 +81,6 @@ def purify_image_for_preview(stacked_gray, scale=0.5):
     resized = cv2.resize(stacked_gray, dim, interpolation=cv2.INTER_AREA)
     _, thresh = cv2.threshold(resized, 100, 255, cv2.THRESH_BINARY)
     kernel = np.ones((3,3), np.uint8)
-    # 预览图直接用一次开运算就足够了，因为它的像素是绝对完美的
     opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
     pil_img = Image.fromarray(opening, mode='L')
     return img_to_base64(pil_img)
@@ -124,13 +124,17 @@ def generate_visual_crypto_from_text(text_data):
     source_arr = np.array(qr.make_image(fill_color="black", back_color="white").convert('1'), dtype=bool)
     return apply_visual_crypto(source_arr)
 
+# [阶段一核心]：生成 AES 密文与 VC 分片
 @app.post("/generate")
 async def generate(text: str = Form(...)):
     try:
+        # 1. 随机生成 16 字符的 AES 密钥 (8字节hex)
         aes_key = secrets.token_hex(8) 
+        # 2. 加密明文长文本
         encrypted_payload = encrypt_aes_gcm(text, aes_key)
+        # 3. 将 AES 密文打包为普通二维码
         ciphertext_qr_b64 = generate_normal_qr_base64(encrypted_payload)
-        
+        # 4. 仅将 16 位的 aes_key 进行视觉密码拆分
         img1, img2, preview_clean = generate_visual_crypto_from_text(aes_key)
         
         return {
@@ -145,6 +149,7 @@ async def generate(text: str = Form(...)):
 
 @app.post("/generate_image")
 async def generate_image(file: UploadFile = File(...)):
+    # 纯图片生成视觉密码，此逻辑保持不变
     try:
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
@@ -167,16 +172,6 @@ async def generate_image(file: UploadFile = File(...)):
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
-@app.post("/decrypt_payload")
-async def decrypt_payload(payload: str = Form(...), key: str = Form(...)):
-    try:
-        plaintext = decrypt_aes_gcm(payload, key)
-        return {"status": "success", "content": plaintext}
-    except ValueError:
-         return {"status": "fail", "error": "解密失败：物理密钥错误或密文被篡改。"}
-    except Exception as e:
-        return {"status": "fail", "error": f"解析异常: {str(e)}"}
-
 # ================= 智能识别管道 (解密) =================
 
 def try_decode(img_bgr):
@@ -190,11 +185,8 @@ def try_decode(img_bgr):
         
         _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        # --- 核心修复：形态学操作增强 ---
         kernel = np.ones((3,3), np.uint8)
-        # 1. 闭运算 (Close)：先膨胀后腐蚀。专门用于填补白色背景上的黑色细小空洞/黑斑
         closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-        # 2. 开运算 (Open)：先腐蚀后膨胀。专门用于消除黑色背景上的白色噪点
         clean_img = cv2.morphologyEx(closing, cv2.MORPH_OPEN, kernel)
         
         value_clean, _, _ = detect.detectAndDecode(clean_img)
@@ -207,6 +199,7 @@ def try_decode(img_bgr):
             
     return None, None
 
+# 解析视觉密码对齐后的图像
 @app.post("/decode")
 async def decode_qr(file: UploadFile = File(...)):
     try:
@@ -226,6 +219,45 @@ async def decode_qr(file: UploadFile = File(...)):
             return {"status": "fail", "error": "无法识别二维码。请尝试：\n1. 确保两张图完全对齐\n2. 尝试微调偏移量"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
+
+# [阶段一新增]：解析普通的 AES 密文二维码
+@app.post("/decode_normal_qr")
+async def decode_normal_qr(file: UploadFile = File(...)):
+    try:
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        if img is None:
+            return {"status": "fail", "error": "无法解析图片文件"}
+
+        detect = cv2.QRCodeDetector()
+        val, _, _ = detect.detectAndDecode(img)
+        if val:
+            return {"status": "success", "content": val}
+            
+        # Fallback
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        val2, _, _ = detect.detectAndDecode(thresh)
+        if val2:
+             return {"status": "success", "content": val2}
+             
+        return {"status": "fail", "error": "无法提取密文，请确保上传的是清晰的载体二维码。"}
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
+
+# [阶段一核心]：最终联合解密
+@app.post("/decrypt_payload")
+async def decrypt_payload(payload: str = Form(...), key: str = Form(...)):
+    try:
+        plaintext = decrypt_aes_gcm(payload, key)
+        return {"status": "success", "content": plaintext}
+    except ValueError:
+         return {"status": "fail", "error": "密钥无效或密文被篡改！"}
+    except Exception as e:
+        return {"status": "fail", "error": f"解析异常: {str(e)}"}
+
 
 if __name__ == "__main__":
     import uvicorn
