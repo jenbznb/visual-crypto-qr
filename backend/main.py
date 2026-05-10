@@ -80,6 +80,7 @@ def purify_image_for_preview(stacked_gray, scale=0.5):
     resized = cv2.resize(stacked_gray, dim, interpolation=cv2.INTER_AREA)
     _, thresh = cv2.threshold(resized, 100, 255, cv2.THRESH_BINARY)
     kernel = np.ones((3,3), np.uint8)
+    # 预览图直接用一次开运算就足够了，因为它的像素是绝对完美的
     opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
     pil_img = Image.fromarray(opening, mode='L')
     return img_to_base64(pil_img)
@@ -180,30 +181,29 @@ async def decrypt_payload(payload: str = Form(...), key: str = Form(...)):
 
 def try_decode(img_bgr):
     detect = cv2.QRCodeDetector()
-    scales = [0.5, 0.33, 0.25, 0.2, 1.0]
+    scales = [0.5, 1.0, 0.33, 0.25, 0.2]
 
     for scale in scales:
         dim = (int(img_bgr.shape[1] * scale), int(img_bgr.shape[0] * scale))
         resized = cv2.resize(img_bgr, dim, interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
         
-        # 核心修复 1：将阈值设为100（和加密端保持一致）减少黑斑噪点
         _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
         
-        # 核心修复 2：无论如何先执行形态学开运算生成净化图像 (opening)
+        # --- 核心修复：形态学操作增强 ---
         kernel = np.ones((3,3), np.uint8)
-        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        # 1. 闭运算 (Close)：先膨胀后腐蚀。专门用于填补白色背景上的黑色细小空洞/黑斑
+        closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # 2. 开运算 (Open)：先腐蚀后膨胀。专门用于消除黑色背景上的白色噪点
+        clean_img = cv2.morphologyEx(closing, cv2.MORPH_OPEN, kernel)
         
-        # 先尝试识别净化后的图像 (更符合人类视觉，通常也能成功)
-        value_open, _, _ = detect.detectAndDecode(opening)
-        if value_open:
-            return value_open, opening 
+        value_clean, _, _ = detect.detectAndDecode(clean_img)
+        if value_clean:
+            return value_clean, clean_img 
             
-        # 如果净化导致细节丢失识别失败，回退到带有噪点的 thresh 识别
         value, _, _ = detect.detectAndDecode(thresh)
         if value:
-            # 即使靠噪点图识别成功，返回给前端 UI 的也必须是净化版的图 opening
-            return value, opening 
+            return value, clean_img 
             
     return None, None
 
