@@ -6,3 +6,5 @@ pillow
 numpy
 opencv-python-headless
 pycryptodome
+segno
+bitarray
