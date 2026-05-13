@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Layers, ShieldCheck, Download, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2, KeyRound, FileJson, Check, FileText, UploadCloud } from 'lucide-react';
 import { Html5Qrcode } from 'https://esm.sh/html5-qrcode';
-import jsQR from 'https://esm.sh/jsqr'; // 新增：引入纯正的无损像素级解析引擎
+import jsQR from 'https://esm.sh/jsqr'; 
 
 // --- 工具函数 ---
 const dataURLtoBlob = async (dataUrl) => { const res = await fetch(dataUrl); return await res.blob(); };
@@ -154,7 +154,7 @@ function EncryptView() {
         </div>
       </div>
 
-      {/* 步骤 2：输出分离物 (保持不变) */}
+      {/* 步骤 2：输出分离物 */}
       {shares.share1 && (
         <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in no-print">
             <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-indigo-300">2. 分发安全凭证</h3>
@@ -216,6 +216,9 @@ function DecryptView() {
   const [isScanningPayload, setIsScanningPayload] = useState(false);
   const [cipherPayload, setCipherPayload] = useState(null);
 
+  const [isLiveScanning, setIsLiveScanning] = useState(false);
+  const html5QrCodeRef = useRef(null);
+
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [finalResult, setFinalResult] = useState(null);
 
@@ -230,22 +233,54 @@ function DecryptView() {
 
   const move = (dx, dy) => setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
 
-  // --- 核心修复：三级火箭降落伞提取机制 (防缩放毁坏) ---
+  // --- 调用原生摄像头实时扫码 ---
+  const startLiveScan = () => {
+      setIsLiveScanning(true);
+      setTimeout(() => {
+          html5QrCodeRef.current = new Html5Qrcode("live-reader");
+          html5QrCodeRef.current.start(
+              { facingMode: "environment" },
+              { fps: 10, qrbox: { width: 250, height: 250 } },
+              (decodedText) => {
+                  if (decodedText && decodedText.includes("[VC-STEGO]")) {
+                      setCipherPayload(decodedText.split("[VC-STEGO]")[1]);
+                      stopLiveScan();
+                  }
+              },
+              (err) => { /* 扫描过程中未对焦时的报错，直接忽略 */ }
+          ).catch((err) => {
+              alert("无法调用摄像头，请检查浏览器权限：" + err);
+              setIsLiveScanning(false);
+          });
+      }, 200);
+  };
+
+  const stopLiveScan = () => {
+      if (html5QrCodeRef.current) {
+          html5QrCodeRef.current.stop().then(() => {
+              html5QrCodeRef.current.clear();
+              setIsLiveScanning(false);
+          }).catch(() => setIsLiveScanning(false));
+      } else {
+          setIsLiveScanning(false);
+      }
+  };
+
+  // --- 三级火箭降落伞提取机制 ---
   const handleExtractPayload = async () => {
       if (!payloadImg) return;
       setIsScanningPayload(true);
 
-      // 第 1 级解析：硬核 jsQR (绝不缩放，专治超高密度数字原图)
+      // 第 1 级解析：硬核 jsQR (专治超高密度数字原图)
       try {
           const codeData = await new Promise((resolve, reject) => {
               const img = new Image();
               img.onload = () => {
                   const canvas = document.createElement('canvas');
-                  // 强制使用真实像素分辨率，严禁降低分辨率
                   canvas.width = img.naturalWidth || img.width;
                   canvas.height = img.naturalHeight || img.height;
                   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-                  ctx.imageSmoothingEnabled = false; // 严禁抗锯齿，保护黑白方块边界
+                  ctx.imageSmoothingEnabled = false; 
                   ctx.drawImage(img, 0, 0);
                   
                   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -260,13 +295,13 @@ function DecryptView() {
           if (codeData && codeData.includes("[VC-STEGO]")) {
               setCipherPayload(codeData.split("[VC-STEGO]")[1]);
               setIsScanningPayload(false);
-              return; // 成功截取！
+              return;
           }
       } catch (err) {
           console.log("第 1 级引擎 jsQR 未命中，尝试降级...", err);
       }
 
-      // 第 2 级解析：Html5Qrcode (处理可能轻微形变的图片)
+      // 第 2 级解析：Html5Qrcode
       try {
           const blob = await dataURLtoBlob(payloadImg);
           const file = new File([blob], "payload.png", { type: "image/png" });
@@ -276,7 +311,7 @@ function DecryptView() {
           if (result && result.includes("[VC-STEGO]")) {
               setCipherPayload(result.split("[VC-STEGO]")[1]);
               setIsScanningPayload(false);
-              return; // 成功截取！
+              return; 
           }
       } catch (err) {
           console.log("第 2 级引擎 html5-qrcode 未命中，移交后端...", err);
@@ -293,7 +328,7 @@ function DecryptView() {
           if (data.status === 'success') {
               setCipherPayload(data.content);
           } else {
-              alert("高密度密文解析彻底失败：此二维码版本极高，且经过系统压缩模糊，底层黑白矩阵已被破坏。请使用未被压缩的原图！\n" + data.error);
+              alert("高密度密文解析彻底失败：此二维码版本极高，底层矩阵可能已被破坏。请尝试使用摄像头直接扫码功能！\n" + data.error);
           }
       } catch (err) {
           alert("提取密文时发生网络错误");
@@ -412,7 +447,7 @@ function DecryptView() {
   return (
     <div className="flex flex-col gap-6 w-full max-w-4xl mx-auto">
       
-      {/* 修正：完全将它移出文档流，避免宽高 0x0 导致的库内部报错 */}
+      {/* 隐藏的底层扫描器 */}
       <div id="hidden-qr-reader" className="absolute opacity-0 pointer-events-none -z-50 w-px h-px overflow-hidden"></div>
 
       {/* 解密结果展示 Modal */}
@@ -428,25 +463,29 @@ function DecryptView() {
           </div>
       )}
 
-      {/* 第一阶段：获取载体 */}
-      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row gap-6 items-center">
-         <div className="w-full md:w-1/3 flex flex-col gap-2 border-r border-slate-700 pr-4">
-             <h3 className="text-lg font-bold text-indigo-400 flex items-center gap-2"><FileJson size={20}/> 1. 提取密文</h3>
-             <p className="text-xs text-slate-400">上传伪装诱饵二维码</p>
-         </div>
-         <div className="w-full md:w-2/3 flex items-center gap-4">
-             {renderUploadBox("诱饵二维码", payloadImg, setPayloadImg, "payloadInput")}
-             <button onClick={handleExtractPayload} disabled={!payloadImg || isScanningPayload || cipherPayload} className={`py-3 px-6 rounded-lg font-bold flex items-center gap-2 transition-all flex-1 justify-center ${cipherPayload ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500' : 'bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-700'}`}>
-                 {isScanningPayload ? <Loader2 className="animate-spin" size={18} /> : cipherPayload ? <><CheckCircle2 size={18}/> 密文已剥离</> : '从底层剥离密文'}
-             </button>
-         </div>
-      </div>
+      {/* 实时摄像头扫描全屏 Modal */}
+      {isLiveScanning && (
+          <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center bg-black/95 p-4 no-print">
+              <div className="w-full max-w-md bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 relative flex flex-col">
+                  <div className="p-4 bg-slate-800 flex justify-between items-center border-b border-slate-700">
+                      <h3 className="font-bold flex items-center gap-2 text-indigo-400"><ScanLine size={18}/> 实时扫描密文</h3>
+                      <button onClick={stopLiveScan} className="text-slate-400 hover:text-white"><X size={20}/></button>
+                  </div>
+                  {/* 摄像头画面容器 */}
+                  <div id="live-reader" className="w-full bg-black min-h-[300px]"></div>
+                  <div className="p-4 text-xs text-slate-400 text-center leading-relaxed">
+                      请将包含隐写数据的诱饵二维码放入框内。<br/>
+                      <span className="text-yellow-500">注意：若载荷过大导致二维码极其密集，摄像头流媒体可能无法解析，请直接使用相册上传功能。</span>
+                  </div>
+              </div>
+          </div>
+      )}
 
-      {/* 第二阶段：提取密钥 */}
+      {/* 第一阶段：提取密钥 (将物理钥匙作为第一步更符合直觉) */}
       <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row gap-6">
          <div className="w-full md:w-1/3 flex flex-col gap-2 border-b md:border-b-0 md:border-r border-slate-700 pr-4 pb-4 md:pb-0">
-             <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2"><KeyRound size={20}/> 2. 提取密钥</h3>
-             <p className="text-xs text-slate-400 mb-2">叠合物理分片获取钥匙</p>
+             <h3 className="text-lg font-bold text-emerald-400 flex items-center gap-2"><KeyRound size={20}/> 1. 提取物理密钥</h3>
+             <p className="text-xs text-slate-400 mb-2">先叠合物理分片获取解密钥匙</p>
              <div className="flex gap-2 w-full">{renderUploadBox("分片A", imgA, setImgA, "keyA")}{renderUploadBox("分片B", imgB, setImgB, "keyB")}</div>
              {imgA && imgB && !aesKey && (
                 <div className="grid grid-cols-3 gap-1 w-24 mx-auto mt-4">
@@ -462,8 +501,8 @@ function DecryptView() {
              {aesKey ? (
                  <div className="flex flex-col items-center text-emerald-400 animate-fade-in">
                     <CheckCircle2 size={48} className="mb-2" />
-                    <span className="font-bold text-lg">物理密钥提取成功</span>
-                    <span className="font-mono text-xs opacity-50 mt-1">Key Matrix Locked</span>
+                    <span className="font-bold text-lg">物理密钥已锁定</span>
+                    <span className="font-mono text-xs opacity-50 mt-1">Ready to Scan</span>
                  </div>
              ) : imgA && imgB ? (
                 <div className="relative flex items-center justify-center w-full h-full p-4">
@@ -471,13 +510,43 @@ function DecryptView() {
                     <img src={imgB} className="absolute z-20 pixelated-image mix-blend-multiply opacity-80 transition-transform duration-75 max-h-[180px]" style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }} alt="B" />
                 </div>
              ) : (
-                <span className="text-slate-500 text-sm">等待分片...</span>
+                <span className="text-slate-500 text-sm">等待分配物理凭证...</span>
              )}
              
              {imgA && imgB && !aesKey && (
                  <button onClick={handleExtractKey} disabled={isScanningKey} className="absolute bottom-4 right-4 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold shadow-lg flex items-center gap-2">
                      {isScanningKey ? <Loader2 className="animate-spin" size={16}/> : '合成并提取密钥'}
                  </button>
+             )}
+         </div>
+      </div>
+
+      {/* 第二阶段：提取密文载荷 (提供双通道输入) */}
+      <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row gap-6 items-center">
+         <div className="w-full md:w-1/3 flex flex-col gap-2 border-r border-slate-700 pr-4">
+             <h3 className="text-lg font-bold text-indigo-400 flex items-center gap-2"><FileJson size={20}/> 2. 扫码读取密文</h3>
+             <p className="text-xs text-slate-400">调用摄像头扫码或相册上传原图</p>
+         </div>
+         <div className="w-full md:w-2/3 flex flex-col gap-4">
+             <div className="flex items-center gap-4">
+                 {/* 左侧：保留安全回退的相册上传 */}
+                 {renderUploadBox("原图上传", payloadImg, setPayloadImg, "payloadInput")}
+                 {/* 右侧：新增激进体验的摄像头调用 */}
+                 <button onClick={startLiveScan} className="flex-1 h-20 flex flex-col items-center justify-center gap-1 border-2 border-dashed border-slate-600 hover:border-indigo-400 bg-slate-800 hover:bg-slate-700 text-slate-400 transition-all rounded-lg cursor-pointer">
+                     <ScanLine size={18} />
+                     <span className="text-[10px]">开启实时摄像头</span>
+                 </button>
+             </div>
+             
+             {payloadImg && !cipherPayload && (
+                 <button onClick={handleExtractPayload} disabled={isScanningPayload} className={`py-3 px-6 rounded-lg font-bold flex items-center justify-center gap-2 transition-all w-full bg-indigo-600 hover:bg-indigo-500 text-white`}>
+                     {isScanningPayload ? <Loader2 className="animate-spin" size={18} /> : '从底图剥离密文'}
+                 </button>
+             )}
+             {cipherPayload && (
+                 <div className="py-3 px-6 rounded-lg font-bold flex items-center justify-center gap-2 w-full bg-indigo-600/20 text-indigo-400 border border-indigo-500">
+                     <CheckCircle2 size={18}/> 密文已剥离就绪
+                 </div>
              )}
          </div>
       </div>
