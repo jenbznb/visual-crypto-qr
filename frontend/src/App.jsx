@@ -383,6 +383,7 @@ function DecryptView({ showToast, libsReady }) {
   };
 
   // --- 调取摄像头执行实时二维码捕获 ---
+  // --- 调取摄像头执行实时二维码捕获（已升级为后端多尺度 OpenCV 滤波直扫） ---
   const startLiveScan = () => {
     if (!libsReady || !window.Html5Qrcode) {
       showToast("解析依赖项正在加载，请稍候再试...", "info");
@@ -394,19 +395,52 @@ function DecryptView({ showToast, libsReady }) {
         html5QrCodeRef.current = new window.Html5Qrcode("live-reader");
         html5QrCodeRef.current.start(
           { facingMode: "environment" },
-          { fps: 15, qrbox: { width: 260, height: 260 } },
-          async (decodedText) => {
-            if (decodedText) {
-              if (decodedText.includes("[VC-S]")) {
-                const hiddenB64 = decodedText.split("[VC-S]")[1];
+          { fps: 12, qrbox: { width: 280, height: 280 } }, // 略微放大扫码框，利于高密度码对焦
+          async (decodedText, result) => {
+            // 💡 升级策略：只要摄像头捕捉到任何含有我们专属协议标记的文本，或者检测到了矩阵
+            if (decodedText && (decodedText.includes("[VC-S]") || decodedText.includes("[VC-STEGO]"))) {
+              const hiddenB64 = decodedText.split("[VC-S]")[1] || decodedText.split("[VC-STEGO]")[1];
+              stopLiveScan();
+              await executeDirectPayloadDecrypt(hiddenB64);
+              return;
+            }
+            
+            // 💡 核心防错机制：如果摄像头捕获到了码但是解压报错，或者直接拿到了图像帧
+            // 我们利用 html5-qrcode 捕获原始 canvas 帧直接送给后端 OpenCV 强行清洗
+            if (result && result.qrcode && !isDecodingCamera) {
+              const videoEl = document.querySelector("#live-reader video");
+              if (videoEl) {
+                const canvas = document.createElement('canvas');
+                canvas.width = videoEl.videoWidth;
+                canvas.height = videoEl.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+                
+                // 将当前捕获的高清原始帧转为 Blob 并发送给后端的深度 OpenCV 解码接口
+                const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
                 stopLiveScan();
-                await executeDirectPayloadDecrypt(hiddenB64);
-              } else {
-                showToast("非隐写专属二维码，无法在此进行压缩解密", "info");
+                setIsDecodingCamera(true);
+                
+                try {
+                  const formData = new FormData();
+                  formData.append('file', blob, 'camera_frame.png');
+                  const response = await fetch(getApiUrl('/decode_normal_qr'), { method: 'POST', body: formData });
+                  const data = await response.json();
+                  if (data.status === 'success') {
+                    setFinalResult(data.content);
+                    showToast("摄像头高清帧经后端 OpenCV 滤波去噪，密函还原成功！", "success");
+                  } else {
+                    showToast("后端高级去噪解析亦失败，请保持镜头垂直、远离屏幕摩尔纹反光后再试", "error");
+                  }
+                } catch(e) {
+                  showToast("连接直扫服务器超时", "error");
+                } finally {
+                  setIsDecodingCamera(false);
+                }
               }
             }
           },
-          (err) => { /* 捕捉对焦中断 */ }
+          (err) => { /* 捕捉对焦中断，保持不间断捕获 */ }
         ).catch((err) => {
           showToast("未能获取摄像头权限或设备不可达", "error");
           setIsLiveScanning(false);
