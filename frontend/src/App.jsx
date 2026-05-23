@@ -7,7 +7,7 @@ const dataURLtoBlob = async (dataUrl) => {
   return await res.blob(); 
 };
 
-// --- 工具函数：获取 API 终结点 ---
+// --- 工具函数：获取 API 端点 ---
 const getApiUrl = (endpoint) => {
   const hostname = window.location.hostname;
   if (hostname.includes('localhost')) {
@@ -71,7 +71,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-6xl mx-auto font-sans text-slate-800 pb-20 relative">
+    <div className="min-h-screen p-4 md:p-8 flex flex-col items-center max-w-6xl mx-auto font-sans text-slate-850 pb-20 relative">
       {/* 全局通知 Toast */}
       {toast && (
         <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl border shadow-2xl transition-all duration-300 animate-fade-in ${
@@ -258,7 +258,7 @@ function EncryptView({ showToast }) {
 
       {/* 步骤 2：输出分离凭证 */}
       {shares.share1 && (
-        <div className="bg-white p-6 rounded-xl border border-slate-200 animate-fade-in no-print shadow-md">
+        <div className="bg-white p-6 rounded-xl border border-slate-200 animate-fade-in no-print shadow-md" id="printable-section">
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-xl font-bold text-indigo-600">2. 分发安全凭证</h3>
             <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 border border-indigo-200 rounded text-[10px] font-mono font-bold">无需物理密钥</span>
@@ -338,7 +338,7 @@ function EncryptView({ showToast }) {
 
 // ================= DecryptView (扫码直扫 / 物理叠合) =================
 function DecryptView({ showToast, libsReady }) {
-  const [decryptTab, setDecryptTab] = useState('direct'); // 'direct'（直扫） | 'overlay'（物理叠合）
+  const [decryptTab, setDecryptTab] = useState('direct'); 
 
   // 叠合微调
   const [imgA, setImgA] = useState(null);
@@ -346,11 +346,11 @@ function DecryptView({ showToast, libsReady }) {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [isProcessingOverlay, setIsProcessingOverlay] = useState(false);
 
-  // 💡 叠合自动净化：在物理匹配成功时，自动将黑乎乎的叠合图像二值化，渲染出纯净二维码！
+  // 叠合自动二值化净化状态
   const [purifiedImg, setPurifiedImg] = useState(null);
   const [showPurified, setShowPurified] = useState(false);
 
-  // 单图直扫 (移除了 payloadImg 模块，只采用纯粹的 Camera 实时直扫还原)
+  // 单图直扫 (移除了本地图片选择，100% 专精高效 Camera 实时直扫还原)
   const [isLiveScanning, setIsLiveScanning] = useState(false);
   const [isDecodingCamera, setIsDecodingCamera] = useState(false);
   
@@ -365,7 +365,6 @@ function DecryptView({ showToast, libsReady }) {
       const reader = new FileReader();
       reader.onload = (event) => {
         setImgState(event.target.result);
-        // 清理旧的净化结果
         setPurifiedImg(null);
         setShowPurified(false);
         showToast("图像成功载入", "success");
@@ -376,14 +375,12 @@ function DecryptView({ showToast, libsReady }) {
 
   const move = (dx, dy) => {
     setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
-    // 移动微调时，暂时解除“纯净化图显示”，让用户看着叠加格调对齐
     if (showPurified) {
       setShowPurified(false);
     }
   };
 
-  // --- 调取摄像头执行实时二维码捕获 ---
-  // --- 调取摄像头执行实时二维码捕获（已升级为后端多尺度 OpenCV 滤波直扫） ---
+  // --- 🌟 调取摄像头执行实时二维码捕获 ---
   const startLiveScan = () => {
     if (!libsReady || !window.Html5Qrcode) {
       showToast("解析依赖项正在加载，请稍候再试...", "info");
@@ -395,52 +392,25 @@ function DecryptView({ showToast, libsReady }) {
         html5QrCodeRef.current = new window.Html5Qrcode("live-reader");
         html5QrCodeRef.current.start(
           { facingMode: "environment" },
-          { fps: 12, qrbox: { width: 280, height: 280 } }, // 略微放大扫码框，利于高密度码对焦
-          async (decodedText, result) => {
-            // 💡 升级策略：只要摄像头捕捉到任何含有我们专属协议标记的文本，或者检测到了矩阵
-            if (decodedText && (decodedText.includes("[VC-S]") || decodedText.includes("[VC-STEGO]"))) {
-              const hiddenB64 = decodedText.split("[VC-S]")[1] || decodedText.split("[VC-STEGO]")[1];
-              stopLiveScan();
-              await executeDirectPayloadDecrypt(hiddenB64);
-              return;
-            }
-            
-            // 💡 核心防错机制：如果摄像头捕获到了码但是解压报错，或者直接拿到了图像帧
-            // 我们利用 html5-qrcode 捕获原始 canvas 帧直接送给后端 OpenCV 强行清洗
-            if (result && result.qrcode && !isDecodingCamera) {
-              const videoEl = document.querySelector("#live-reader video");
-              if (videoEl) {
-                const canvas = document.createElement('canvas');
-                canvas.width = videoEl.videoWidth;
-                canvas.height = videoEl.videoHeight;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-                
-                // 将当前捕获的高清原始帧转为 Blob 并发送给后端的深度 OpenCV 解码接口
-                const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
+          { fps: 15, qrbox: { width: 260, height: 260 } },
+          async (decodedText) => {
+            if (decodedText) {
+              let hiddenPayload = "";
+              if (decodedText.includes("[VC-S]")) {
+                hiddenPayload = decodedText.split("[VC-S]")[1];
+              } else if (decodedText.includes("[VC-STEGO]")) {
+                hiddenPayload = decodedText.split("[VC-STEGO]")[1];
+              }
+              
+              if (hiddenPayload) {
                 stopLiveScan();
-                setIsDecodingCamera(true);
-                
-                try {
-                  const formData = new FormData();
-                  formData.append('file', blob, 'camera_frame.png');
-                  const response = await fetch(getApiUrl('/decode_normal_qr'), { method: 'POST', body: formData });
-                  const data = await response.json();
-                  if (data.status === 'success') {
-                    setFinalResult(data.content);
-                    showToast("摄像头高清帧经后端 OpenCV 滤波去噪，密函还原成功！", "success");
-                  } else {
-                    showToast("后端高级去噪解析亦失败，请保持镜头垂直、远离屏幕摩尔纹反光后再试", "error");
-                  }
-                } catch(e) {
-                  showToast("连接直扫服务器超时", "error");
-                } finally {
-                  setIsDecodingCamera(false);
-                }
+                await executeDirectPayloadDecrypt(hiddenPayload.trim());
+              } else {
+                showToast("非隐写专属二维码，无法在此进行压缩解密", "info");
               }
             }
           },
-          (err) => { /* 捕捉对焦中断，保持不间断捕获 */ }
+          (err) => { /* 捕捉对焦中断，保持静默扫码 */ }
         ).catch((err) => {
           showToast("未能获取摄像头权限或设备不可达", "error");
           setIsLiveScanning(false);
@@ -463,12 +433,12 @@ function DecryptView({ showToast, libsReady }) {
     }
   };
 
-  // 一键解压
-  const executeDirectPayloadDecrypt = async (b64Payload) => {
+  // 一键自适应极速解密
+  const executeDirectPayloadDecrypt = async (payloadData) => {
     setIsDecodingCamera(true);
     try {
       const formData = new FormData();
-      formData.append('payload', b64Payload);
+      formData.append('payload', payloadData);
       formData.append('key', ''); 
 
       const response = await fetch(getApiUrl('/decrypt_payload'), { method: 'POST', body: formData });
@@ -476,9 +446,9 @@ function DecryptView({ showToast, libsReady }) {
       
       if (data.status === 'success') {
         setFinalResult(data.content);
-        showToast("安全密函已完美还原展现！", "success");
+        showToast("安全密函已还原成功！", "success");
       } else {
-        showToast("数据流解压失败，信息可能在扫码时损坏", "error");
+        showToast("数据流解压失败，密文可能在传输/扫码时受损：" + (data.error || ""), "error");
       }
     } catch (err) {
       showToast("连接后端解密服务超时", "error");
@@ -487,30 +457,58 @@ function DecryptView({ showToast, libsReady }) {
     }
   };
 
-  // 叠加层渲染合并分析
+  // 叠加层还原抗噪硬合并分析 (避免正片叠底半透明背景引起的定位点失真)
   const handleExtractOverlay = async () => {
     if (!imgA || !imgB) return;
     setIsProcessingOverlay(true);
     try {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = false;
-
       const image1 = new Image(); 
       const image2 = new Image();
       const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
       await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
-      
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
       canvas.width = image1.width; 
       canvas.height = image1.height;
       
-      ctx.fillStyle = "white"; 
+      // 先铺设绝对纯白背景
+      ctx.fillStyle = "#FFFFFF"; 
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(image1, 0, 0);
+
+      const canvasA = document.createElement('canvas');
+      const ctxA = canvasA.getContext('2d');
+      canvasA.width = canvas.width; canvasA.height = canvas.height;
+      ctxA.drawImage(image1, 0, 0);
+      const imgDataA = ctxA.getImageData(0, 0, canvas.width, canvas.height).data;
+
+      const canvasB = document.createElement('canvas');
+      const ctxB = canvasB.getContext('2d');
+      canvasB.width = canvas.width; canvasB.height = canvas.height;
+      ctxB.drawImage(image2, offset.x, offset.y);
+      const imgDataB = ctxB.getImageData(0, 0, canvas.width, canvas.height).data;
+
+      const finalImgData = ctx.createImageData(canvas.width, canvas.height);
+      const d = finalImgData.data;
+
+      // 像素硬合并算法：只要有任何一方是黑色且非透明，该位置即设为绝对黑色
+      for (let i = 0; i < imgDataA.length; i += 4) {
+        const rA = imgDataA[i];
+        const rB = imgDataB[i];
+        const aA = imgDataA[i+3];
+        const aB = imgDataB[i+3];
+
+        const isBlackA = (rA < 128 && aA > 50);
+        const isBlackB = (rB < 128 && aB > 50);
+
+        if (isBlackA || isBlackB) {
+          d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
+        } else {
+          d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = 255;
+        }
+      }
       
-      // 正片叠底，完美模拟物理堆叠
-      ctx.globalCompositeOperation = 'multiply';
-      ctx.drawImage(image2, offset.x, offset.y);
+      ctx.putImageData(finalImgData, 0, 0);
       
       const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
       const formData = new FormData();
@@ -531,20 +529,20 @@ function DecryptView({ showToast, libsReady }) {
         showToast(data.error || "提取失败，请重新微调对齐偏差。", "error");
       }
     } catch (err) {
-      showToast("网络数据传输异常", "error");
+      showToast("前端像素合并时发生异常：" + err.message, "error");
     } finally {
       setIsProcessingOverlay(false);
     }
   };
 
-  // 渲染最终展现
+  // 最终解密明文气泡卡片渲染
   const renderDecryptedContent = () => {
     if (!finalResult) return null;
 
     if (finalResult.startsWith('data:')) {
       const isImage = finalResult.startsWith('data:image/');
       return (
-        <div className="flex flex-col items-center w-full">
+        <div className="flex flex-col items-center w-full animate-fade-in">
           <div className="bg-slate-50 border border-slate-200 p-5 rounded-xl w-full flex flex-col items-center justify-center mb-6 shadow-inner">
             {isImage ? (
               <img src={finalResult} alt="Decrypted Content" className="max-w-[210px] w-full rounded shadow-md border-2 border-indigo-500 bg-white pixelated-image" />
@@ -673,7 +671,7 @@ function DecryptView({ showToast, libsReady }) {
         </button>
       </div>
 
-      {/* 模式一：直接扫描与还原 (移除隐写底图上传，全面改为简洁直扫按钮) */}
+      {/* 模式一：直接扫描与还原 */}
       {decryptTab === 'direct' && (
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-md flex flex-col md:flex-row gap-6 items-center animate-fade-in">
           <div className="w-full md:w-1/3 flex flex-col gap-2 border-slate-200 pr-0 md:pr-4 border-b md:border-b-0 md:border-r pb-4 md:pb-0">
