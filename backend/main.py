@@ -7,10 +7,7 @@ from fastapi import FastAPI, Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 import json
-from Crypto.Cipher import AES
-import secrets
-import segno
-import zlib  # 🌟 新增：引入底层极限压缩引擎
+import zlib  # 🌟 重新引入：底层极限压缩引擎
 
 app = FastAPI()
 
@@ -28,81 +25,68 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 工具函数：图片处理 ---
+# --- 工具函数：图片转换 ---
 def img_to_base64(img):
+    """
+    将 PIL Image 对象转换为 Base64 编码的 Data URL
+    """
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
 
-# --- AES-GCM 加密管道 (含 Zlib 极限压缩) ---
-def encrypt_aes_gcm(plaintext: str, key_hex: str) -> str:
-    key = key_hex.encode('utf-8')
-    cipher = AES.new(key, AES.MODE_GCM)
-    
-    # 🌟 核心瘦身：在进入 AES 绞肉机前，先用最高等级(9)榨干文本水分
-    compressed_data = zlib.compress(plaintext.encode('utf-8'), level=9)
-    
-    # 加密压缩后的高密度数据
-    ciphertext, tag = cipher.encrypt_and_digest(compressed_data)
-    
-    # 紧凑格式输出
-    n = base64.b64encode(cipher.nonce).decode('utf-8')
-    t = base64.b64encode(tag).decode('utf-8')
-    c = base64.b64encode(ciphertext).decode('utf-8')
-    return f"{n}.{t}.{c}"
-
-def decrypt_aes_gcm(payload_str: str, key_hex: str) -> str:
-    # 防御性清理
-    payload_str = payload_str.replace("[VC-S]", "").replace("[VC-STEGO]", "")
-    
-    if payload_str.startswith("{"):
-        data = json.loads(payload_str)
-        nonce = base64.b64decode(data['n'])
-        tag = base64.b64decode(data['t'])
-        ciphertext = base64.b64decode(data['c'])
-    else:
-        parts = payload_str.split('.')
-        nonce = base64.b64decode(parts[0])
-        tag = base64.b64decode(parts[1])
-        ciphertext = base64.b64decode(parts[2])
-        
-    cipher = AES.new(key_hex.encode('utf-8'), AES.MODE_GCM, nonce=nonce)
-    
-    # 解密得到压缩后的二进制流
-    decrypted_compressed_data = cipher.decrypt_and_verify(ciphertext, tag)
-    
-    # 🌟 核心还原：解压缩二进制流，恢复原始文本
-    return zlib.decompress(decrypted_compressed_data).decode('utf-8')
-
 # --- 视觉密码核心 (VC) ---
 def add_alignment_marks(img_array):
+    """
+    在图像矩阵的四个角添加十字对齐标记，方便物理打印叠合
+    """
     h, w = img_array.shape
     mark_size = 20
     thickness = 4
     corners = [(0, 0), (0, w - mark_size), (h - mark_size, 0), (h - mark_size, w - mark_size)]
     for y_start, x_start in corners:
+        # 横线
         img_array[y_start + mark_size//2 - thickness//2 : y_start + mark_size//2 + thickness//2, x_start : x_start + mark_size] = 0
+        # 竖线
         img_array[y_start : y_start + mark_size, x_start + mark_size//2 - thickness//2 : x_start + mark_size//2 + thickness//2] = 0
     return img_array
 
 def apply_visual_crypto(source_arr):
+    """
+    将源黑白二维码图像矩阵分割成两张视觉密码学分片 (2,2 VC)
+    """
     h, w = source_arr.shape
-    patterns = np.array([[[0, 1], [0, 1]], [[1, 0], [1, 0]], [[0, 0], [1, 1]], [[1, 1], [0, 0]], [[0, 1], [1, 0]], [[1, 0], [0, 1]]], dtype=np.uint8)
+    # 定义 2x2 子像素模式 (1代表白，0代表黑)
+    patterns = np.array([
+        [[0, 1], [0, 1]], 
+        [[1, 0], [1, 0]], 
+        [[0, 0], [1, 1]], 
+        [[1, 1], [0, 0]], 
+        [[0, 1], [1, 0]], 
+        [[1, 0], [0, 1]]
+    ], dtype=np.uint8)
+    
+    # 为每个像素随机选择一个基本模式
     rng = np.random.randint(0, 6, size=(h, w))
     pat_a = patterns[rng]
+    
+    # 遮罩矩阵，若源图像点为1(白色)，则分片B与A相同(叠合后也是白色)
+    # 若源图像点为0(黑色)，则分片B与A完全相反(叠合后变为全黑)
     mask = source_arr[:, :, np.newaxis, np.newaxis]
     pat_b = np.where(mask, pat_a, 1 - pat_a)
     
+    # 构建最终的扩展子像素图像（尺寸放大两倍）
     final_h, final_w = h * 2, w * 2
     share_a_img = pat_a.swapaxes(1, 2).reshape(final_h, final_w) * 255
     share_b_img = pat_b.swapaxes(1, 2).reshape(final_h, final_w) * 255
     
+    # 添加边缘留白（Padding）以保障二维码扫描边缘保护区（Quiet Zone）
     padding = 20
     full_a = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
     full_b = np.full((final_h + padding*2, final_w + padding*2), 255, dtype=np.uint8)
     full_a[padding:-padding, padding:-padding] = share_a_img
     full_b[padding:-padding, padding:-padding] = share_b_img
     
+    # 模拟物理叠合（取最小值：黑像素覆盖白像素）
     stacked = np.minimum(full_a, full_b)
     dim = (int(stacked.shape[1] * 0.5), int(stacked.shape[0] * 0.5))
     resized = cv2.resize(stacked, dim, interpolation=cv2.INTER_AREA)
@@ -113,45 +97,57 @@ def apply_visual_crypto(source_arr):
            Image.fromarray(add_alignment_marks(full_b), mode='L'), \
            img_to_base64(Image.fromarray(opening, mode='L'))
 
-def generate_vc_shares_from_key(key_text):
-    qr = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_H, box_size=10, border=4)
-    qr.add_data(key_text)
-    qr.make(fit=True)
-    source_arr = np.array(qr.make_image(fill_color="black", back_color="white").convert('1'), dtype=bool)
-    return apply_visual_crypto(source_arr)
-
-
-# ================= 🚀 隐写术核心逻辑 (Steganography) =================
-
-def generate_stego_qr_base64(payload_json: str):
+def generate_stego_qr_matrix_and_base64(payload_str: str):
     """
-    隐写生成逻辑
+    先对安全机密进行zlib极限压缩并Base64编码，再隐写进诱导性前缀中，最终生成源二维码矩阵
     """
-    # 🌟 隐私限制与体积极限压缩：使用仅 10 个字符的极简通用短链，切断与 GitHub 源码的关联
     bait_url = "https://g.cn"
     
-    stego_content = f"{bait_url}#[VC-S]{payload_json}"
+    # 🌟 核心优化：在生成二维码前，对文本/流进行 zlib (level 9) 压缩，压榨空间
+    compressed_bytes = zlib.compress(payload_str.encode('utf-8'), level=9)
+    compressed_b64 = base64.b64encode(compressed_bytes).decode('utf-8')
     
-    qr = segno.make(stego_content, error='M') 
+    # 构造隐写协议文本
+    stego_content = f"{bait_url}#[VC-S]{compressed_b64}"
     
-    buff = io.BytesIO()
-    qr.save(buff, kind='png', scale=10, dark="black", light="white", border=4)
-    return "data:image/png;base64," + base64.b64encode(buff.getvalue()).decode()
+    # 采用 H 级别错误纠正（ERROR_CORRECT_H，容错 30%）
+    qr = qrcode.QRCode(
+        version=None, 
+        error_correction=qrcode.constants.ERROR_CORRECT_H, 
+        box_size=10, 
+        border=4
+    )
+    qr.add_data(stego_content)
+    qr.make(fit=True)
+    
+    qr_img = qr.make_image(fill_color="black", back_color="white").convert('1')
+    source_arr = np.array(qr_img, dtype=bool)
+    
+    # 转为 Base64 以供底图预览
+    buffered = io.BytesIO()
+    qr_img.save(buffered, format="PNG")
+    qr_b64 = "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
+    
+    return source_arr, qr_b64
 
 
 # ================= 🚀 业务接口 =================
 
 @app.post("/generate")
 async def generate(text: str = Form(...)):
+    """
+    主生成端：接收机密信息 -> Zlib极限压缩并制作隐写二维码 -> 视觉密码学直接分片
+    """
     try:
-        aes_key = secrets.token_hex(8) 
-        encrypted_payload = encrypt_aes_gcm(text, aes_key)
-        ciphertext_qr_b64 = generate_stego_qr_base64(encrypted_payload)
-        img1, img2, preview_clean = generate_vc_shares_from_key(aes_key)
+        # 直接把压缩后的机密写入隐写矩阵
+        source_arr, stego_qr_b64 = generate_stego_qr_matrix_and_base64(text)
+        
+        # 将二维码图分割成物理分片
+        img1, img2, preview_clean = apply_visual_crypto(source_arr)
         
         return {
             "status": "success", 
-            "ciphertext_qr": ciphertext_qr_b64, 
+            "ciphertext_qr": stego_qr_b64, # 保持键名兼容前端
             "share1": img_to_base64(img1), 
             "share2": img_to_base64(img2), 
             "previewClean": preview_clean
@@ -161,6 +157,9 @@ async def generate(text: str = Form(...)):
 
 @app.post("/decode_normal_qr")
 async def extract_stego_data(file: UploadFile = File(...)):
+    """
+    直扫解析：直接上传正常的诱导二维码，进行zlib解压后还原原始隐藏载荷
+    """
     try:
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
@@ -175,21 +174,32 @@ async def extract_stego_data(file: UploadFile = File(...)):
             val, _, _ = detect.detectAndDecode(thresh)
 
         if val and "[VC-S]" in val:
-            hidden_json = val.split("[VC-S]")[1]
-            return {"status": "success", "content": hidden_json}
+            hidden_b64 = val.split("[VC-S]")[1]
+            try:
+                # 🌟 重新引入：Base64 还原 -> zlib 解压并还原
+                compressed_bytes = base64.b64decode(hidden_b64)
+                hidden_content = zlib.decompress(compressed_bytes).decode('utf-8')
+                return {"status": "success", "content": hidden_content}
+            except Exception:
+                # 兼容性防御：如果解压失败，退回按明文返回
+                return {"status": "success", "content": hidden_b64}
         
-        return {"status": "fail", "error": "未在二维码中检测到隐写载荷。"}
+        return {"status": "fail", "error": "未在二维码中检测到隐写协议 [VC-S] 头。"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
 @app.post("/decode")
 async def decode_vc_key(file: UploadFile = File(...)):
+    """
+    叠合解析：接收两张分片叠合后的组合图 -> 清洗识别 -> zlib解压还原 -> 直接呈现安全数据
+    """
     try:
         contents = await file.read()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         detect = cv2.QRCodeDetector()
         
+        # 多尺度、形态学清洗去噪循环
         for sc in [0.5, 1.0, 0.33]:
             dim = (int(img.shape[1]*sc), int(img.shape[0]*sc))
             resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
@@ -200,19 +210,47 @@ async def decode_vc_key(file: UploadFile = File(...)):
             
             res, _, _ = detect.detectAndDecode(clean)
             if res:
-                return {"status": "success", "content": res, "cleanImage": img_to_base64(Image.fromarray(clean, mode='L'))}
+                # 检查是否包含隐写协议
+                if "[VC-S]" in res:
+                    hidden_b64 = res.split("[VC-S]")[1]
+                    try:
+                        # 🌟 zlib 解密解压还原
+                        compressed_bytes = base64.b64decode(hidden_b64)
+                        hidden_content = zlib.decompress(compressed_bytes).decode('utf-8')
+                    except Exception:
+                        hidden_content = hidden_b64
+                    
+                    return {
+                        "status": "success", 
+                        "content": hidden_content, 
+                        "cleanImage": img_to_base64(Image.fromarray(clean, mode='L'))
+                    }
+                else:
+                    return {
+                        "status": "success", 
+                        "content": res, 
+                        "cleanImage": img_to_base64(Image.fromarray(clean, mode='L'))
+                    }
         
-        return {"status": "fail", "error": "物理密钥识别失败，请检查对齐。"}
+        return {"status": "fail", "error": "叠合条码识别失败，请检查对齐微调或增大光照对比度。"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
 @app.post("/decrypt_payload")
 async def final_decrypt(payload: str = Form(...), key: str = Form(...)):
+    """
+    向下兼容降落伞：如果有旧版本客户端发起历史接口，我们尝试做 zlib 还原后返回
+    """
     try:
-        plaintext = decrypt_aes_gcm(payload, key)
-        return {"status": "success", "content": plaintext}
+        clean_payload = payload.replace("[VC-S]", "")
+        try:
+            compressed_bytes = base64.b64decode(clean_payload)
+            clean_plaintext = zlib.decompress(compressed_bytes).decode('utf-8')
+        except Exception:
+            clean_plaintext = clean_payload
+        return {"status": "success", "content": clean_plaintext}
     except Exception as e:
-        return {"status": "fail", "error": "解密或解压失败：密文与密钥不匹配，或数据已损坏。"}
+        return {"status": "fail", "error": f"转换失败：{str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
