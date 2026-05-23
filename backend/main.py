@@ -37,30 +37,37 @@ def img_to_base64(img):
 # --- 🌟 终极防崩溃：自适应 Hex/Base64 容错解码引擎 ---
 def decode_payload_string(payload_str: str) -> str:
     """
-    一键解决大小写转换、URL转义、缺失填充符、空格污染等所有扫码常见Bug
+    一键自适应清洗：完美剥离诱导前缀，确保精准命中 Hex 密文流进行 Zlib 还原
     """
-    # 1. 基础清洗与解码转义
+    # 1. 基础解密清洗
     clean_payload = urllib.parse.unquote(payload_str).strip()
+    
+    # 2. 强力自适应切分：提取协议标记 #[VC-S] 之后的十六进制流
+    if "#[VC-S]" in clean_payload:
+        clean_payload = clean_payload.split("#[VC-S]")[1]
+    elif "#" in clean_payload:
+        # 兼容性防御：如果扫码器丢失了[VC-S]标签，但保留了#，则直接取#后面的所有内容
+        clean_payload = clean_payload.split("#")[1]
+    
     clean_payload = clean_payload.replace("[VC-S]", "").replace("[VC-STEGO]", "")
     
-    # 2. 核心尝试 A：Hex 十六进制解码 (Case-insensitive，完全不受大小写转换影响)
+    # 3. 核心尝试 A：Hex 十六进制快速解压 (Case-insensitive)
     try:
-        # 只保留 0-9, a-f, A-F 字符
         hex_chars = "".join([c for c in clean_payload if c in "0123456789abcdefABCDEF"])
         if len(hex_chars) > 0 and len(hex_chars) % 2 == 0:
             compressed_bytes = bytes.fromhex(hex_chars)
             return zlib.decompress(compressed_bytes).decode('utf-8')
     except Exception:
-        pass  # 如果不是 Hex，则自动降级到 Base64 容错流程
+        pass  
         
-    # 3. 核心尝试 B：Base64 兼容解码 (含空格纠正与自动补齐 "=" 填充)
+    # 4. 核心尝试 B：Base64 兼容解压
     try:
         b64_cleaned = clean_payload.replace(" ", "+")
         padded_b64 = b64_cleaned + "=" * ((4 - len(b64_cleaned) % 4) % 4)
         compressed_bytes = base64.b64decode(padded_b64)
         return zlib.decompress(compressed_bytes).decode('utf-8')
     except Exception:
-        # 如果 Zlib 解压彻底失败，退回直接展示原文本作为兜底
+        # 如果 Zlib 彻底失败，作为最后一道防线退回展示原文本
         return clean_payload
 
 
