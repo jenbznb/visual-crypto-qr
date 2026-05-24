@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, ShieldCheck, Download, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2, KeyRound, FileJson, Check, FileText, UploadCloud, Info, AlertTriangle, HelpCircle, Eye, EyeOff } from 'lucide-react';
+import { Layers, ShieldCheck, Download, Move, CheckCircle2, Lock, Unlock, Camera, X, ScanLine, Printer, Share2, History, Trash2, ExternalLink, Copy, Search, Save, Image as ImageIcon, Loader2, KeyRound, FileJson, Check, FileText, UploadCloud, Info, AlertTriangle, HelpCircle, Eye, EyeOff, Cloud } from 'lucide-react';
 
 // --- 工具函数：数据流转换 ---
 const dataURLtoBlob = async (dataUrl) => { 
@@ -344,13 +344,16 @@ function DecryptView({ showToast, libsReady }) {
   const [imgA, setImgA] = useState(null);
   const [imgB, setImgB] = useState(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [isProcessingOverlay, setIsProcessingOverlay] = useState(false);
+  
+  // 异步状态控制
+  const [isPurifying, setIsPurifying] = useState(false);
+  const [isDecoding, setIsDecoding] = useState(false);
 
-  // 叠合自动二值化净化状态
+  // 叠合净化状态
   const [purifiedImg, setPurifiedImg] = useState(null);
   const [showPurified, setShowPurified] = useState(false);
 
-  // 单图直扫 (移除了本地图片选择，100% 专精高效 Camera 实时直扫还原)
+  // 单图直扫 (专精高效 Camera 实时直扫还原)
   const [isLiveScanning, setIsLiveScanning] = useState(false);
   const [isDecodingCamera, setIsDecodingCamera] = useState(false);
   
@@ -367,7 +370,7 @@ function DecryptView({ showToast, libsReady }) {
         setImgState(event.target.result);
         setPurifiedImg(null);
         setShowPurified(false);
-        showToast("图像成功载入", "success");
+        showToast("图像成功载入，请利用方向键精密对准", "success");
       };
       reader.readAsDataURL(file);
     }
@@ -376,11 +379,124 @@ function DecryptView({ showToast, libsReady }) {
   const move = (dx, dy) => {
     setOffset(prev => ({ x: prev.x + dx, y: prev.y + dy }));
     if (showPurified) {
-      setShowPurified(false);
+      setShowPurified(false); // 对齐偏移发生改变，需要重新净化以防止展示失效图像
     }
   };
 
-  // --- 🌟 调取摄像头执行实时二维码捕获 ---
+  // --- 💡 核心算法：前端高纯度像素级硬合并（布尔逻辑 AND 运算） ---
+  const generateMergedBlob = async () => {
+    if (!imgA || !imgB) return null;
+    const image1 = new Image(); 
+    const image2 = new Image();
+    const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
+    await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = image1.width; 
+    canvas.height = image1.height;
+    
+    // 先铺设绝对纯白背景作为防护层
+    ctx.fillStyle = "#FFFFFF"; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const canvasA = document.createElement('canvas');
+    const ctxA = canvasA.getContext('2d');
+    canvasA.width = canvas.width; canvasA.height = canvas.height;
+    ctxA.drawImage(image1, 0, 0);
+    const imgDataA = ctxA.getImageData(0, 0, canvas.width, canvas.height).data;
+
+    const canvasB = document.createElement('canvas');
+    const ctxB = canvasB.getContext('2d');
+    canvasB.width = canvas.width; canvasB.height = canvas.height;
+    ctxB.drawImage(image2, offset.x, offset.y);
+    const imgDataB = ctxB.getImageData(0, 0, canvas.width, canvas.height).data;
+
+    const finalImgData = ctx.createImageData(canvas.width, canvas.height);
+    const d = finalImgData.data;
+
+    // 像素与逻辑：只要任意分片在该坐标对应黑点，叠合图即认定为纯黑
+    for (let i = 0; i < imgDataA.length; i += 4) {
+      const rA = imgDataA[i];
+      const rB = imgDataB[i];
+      const aA = imgDataA[i+3];
+      const aB = imgDataB[i+3];
+
+      const isBlackA = (rA < 128 && aA > 50);
+      const isBlackB = (rB < 128 && aB > 50);
+
+      if (isBlackA || isBlackB) {
+        d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
+      } else {
+        d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = 255;
+      }
+    }
+    
+    ctx.putImageData(finalImgData, 0, 0);
+    return new Promise(res => canvas.toBlob(res, 'image/png'));
+  };
+
+  // --- ⚡ 阶段一：纯重建层提取 (查看自动净化) ---
+  const handlePurifyOverlay = async () => {
+    if (!imgA || !imgB) return;
+    setIsPurifying(true);
+    try {
+      const blob = await generateMergedBlob();
+      const formData = new FormData();
+      formData.append('file', blob, 'overlay_composite.png');
+
+      const response = await fetch(getApiUrl('/purify_only'), { method: 'POST', body: formData });
+      const data = await response.json();
+
+      if (data.status === 'success' && data.cleanImage) {
+        setPurifiedImg(data.cleanImage);
+        setShowPurified(true);
+        showToast("OpenCV 空间域低通去噪完毕，条纹连通性完美修复！", "success");
+      } else {
+        showToast("净化失败，请检查分片边缘是否对齐", "error");
+      }
+    } catch (err) {
+      showToast("连接后端净化引擎超时: " + err.message, "error");
+    } finally {
+      setIsPurifying(false);
+    }
+  };
+
+  // --- 🔍 阶段二：业务解密层提取 (云端识别) ---
+  const handleExtractOverlay = async () => {
+    if (!imgA || !imgB) return;
+    setIsDecoding(true);
+    try {
+      const blob = await generateMergedBlob();
+      const formData = new FormData();
+      formData.append('file', blob, 'overlay_composite.png');
+
+      const response = await fetch(getApiUrl('/decode'), { method: 'POST', body: formData });
+      const data = await response.json();
+
+      if (data.status === 'success') {
+        setFinalResult(data.content);
+        if (data.cleanImage) {
+          setPurifiedImg(data.cleanImage);
+          setShowPurified(true);
+        }
+        showToast("解密矩阵捕获，秘密共享信道激活成功！", "success");
+      } else {
+        // 识别失败时，若后端返回了净化后的图像（即使无法解析出二维码文本），仍更新底图供微调参考
+        if (data.cleanImage) {
+          setPurifiedImg(data.cleanImage);
+          setShowPurified(true);
+        }
+        showToast(data.error || "提取失败，请利用对齐罗盘微调像素偏置", "error");
+      }
+    } catch (err) {
+      showToast("网络数据传输异常", "error");
+    } finally {
+      setIsDecoding(false);
+    }
+  };
+
+  // --- 调取摄像头执行实时二维码捕获 ---
   const startLiveScan = () => {
     if (!libsReady || !window.Html5Qrcode) {
       showToast("解析依赖项正在加载，请稍候再试...", "info");
@@ -454,84 +570,6 @@ function DecryptView({ showToast, libsReady }) {
       showToast("连接后端解密服务超时", "error");
     } finally {
       setIsDecodingCamera(false);
-    }
-  };
-
-  // 叠加层还原抗噪硬合并分析 (避免正片叠底半透明背景引起的定位点失真)
-  const handleExtractOverlay = async () => {
-    if (!imgA || !imgB) return;
-    setIsProcessingOverlay(true);
-    try {
-      const image1 = new Image(); 
-      const image2 = new Image();
-      const loadImg = (img, src) => new Promise(resolve => { img.onload = resolve; img.src = src; });
-      await Promise.all([loadImg(image1, imgA), loadImg(image2, imgB)]);
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      canvas.width = image1.width; 
-      canvas.height = image1.height;
-      
-      // 先铺设绝对纯白背景
-      ctx.fillStyle = "#FFFFFF"; 
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      const canvasA = document.createElement('canvas');
-      const ctxA = canvasA.getContext('2d');
-      canvasA.width = canvas.width; canvasA.height = canvas.height;
-      ctxA.drawImage(image1, 0, 0);
-      const imgDataA = ctxA.getImageData(0, 0, canvas.width, canvas.height).data;
-
-      const canvasB = document.createElement('canvas');
-      const ctxB = canvasB.getContext('2d');
-      canvasB.width = canvas.width; canvasB.height = canvas.height;
-      ctxB.drawImage(image2, offset.x, offset.y);
-      const imgDataB = ctxB.getImageData(0, 0, canvas.width, canvas.height).data;
-
-      const finalImgData = ctx.createImageData(canvas.width, canvas.height);
-      const d = finalImgData.data;
-
-      // 像素硬合并算法：只要有任何一方是黑色且非透明，该位置即设为绝对黑色
-      for (let i = 0; i < imgDataA.length; i += 4) {
-        const rA = imgDataA[i];
-        const rB = imgDataB[i];
-        const aA = imgDataA[i+3];
-        const aB = imgDataB[i+3];
-
-        const isBlackA = (rA < 128 && aA > 50);
-        const isBlackB = (rB < 128 && aB > 50);
-
-        if (isBlackA || isBlackB) {
-          d[i] = 0; d[i+1] = 0; d[i+2] = 0; d[i+3] = 255;
-        } else {
-          d[i] = 255; d[i+1] = 255; d[i+2] = 255; d[i+3] = 255;
-        }
-      }
-      
-      ctx.putImageData(finalImgData, 0, 0);
-      
-      const blob = await new Promise(res => canvas.toBlob(res, 'image/png'));
-      const formData = new FormData();
-      formData.append('file', blob, 'overlay_composite.png');
-
-      const response = await fetch(getApiUrl('/decode'), { method: 'POST', body: formData });
-      const data = await response.json();
-
-      if (data.status === 'success') {
-        setFinalResult(data.content);
-        
-        if (data.cleanImage) {
-          setPurifiedImg(data.cleanImage);
-          setShowPurified(true);
-        }
-        showToast("物理分片叠合配对成功！安全秘密已完美提取", "success");
-      } else {
-        showToast(data.error || "提取失败，请重新微调对齐偏差。", "error");
-      }
-    } catch (err) {
-      showToast("前端像素合并时发生异常：" + err.message, "error");
-    } finally {
-      setIsProcessingOverlay(false);
     }
   };
 
@@ -741,7 +779,36 @@ function DecryptView({ showToast, libsReady }) {
           <div className="w-full md:w-2/3 flex flex-col items-center justify-center gap-4 relative min-h-[280px] bg-slate-100 rounded-xl border border-slate-200 overflow-hidden shadow-inner p-4">
             {imgA && imgB ? (
               <>
-                {/* 智能纯净视图显示与手动对齐视图切换 */}
+                {/* 🌟 阶段一：自动净化切换（对准后右上角常驻） */}
+                <div className="absolute top-4 right-4 z-30 flex gap-2">
+                  {showPurified && purifiedImg ? (
+                    <button 
+                      onClick={() => setShowPurified(false)}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-full text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer animate-fade-in"
+                    >
+                      <EyeOff size={13}/> 返回物理叠合
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={handlePurifyOverlay}
+                      disabled={isPurifying}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer disabled:opacity-60 animate-fade-in"
+                    >
+                      {isPurifying ? (
+                        <>
+                          <Loader2 className="animate-spin" size={13} />
+                          正在重构滤波...
+                        </>
+                      ) : (
+                        <>
+                          <Eye size={13}/> 查看自动净化效果
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* 核心叠层渲染区 */}
                 {showPurified && purifiedImg ? (
                   <div className="flex flex-col items-center justify-center animate-fade-in">
                     <span className="mb-2.5 px-3 py-1 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-full text-xs font-bold flex items-center gap-1 animate-pulse">
@@ -750,12 +817,6 @@ function DecryptView({ showToast, libsReady }) {
                     <div className="bg-white p-3 rounded-xl shadow-md border-2 border-emerald-500 max-w-[190px] w-full">
                       <img src={purifiedImg} className="w-full pixelated-image animate-fade-in" alt="Purified QR" />
                     </div>
-                    <button 
-                      onClick={() => setShowPurified(false)}
-                      className="mt-3 px-3 py-1 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all shadow-sm cursor-pointer"
-                    >
-                      <Eye size={12}/> 切换回实物叠合微调
-                    </button>
                   </div>
                 ) : (
                   <div className="relative flex items-center justify-center w-full h-full min-h-[220px]">
@@ -768,42 +829,31 @@ function DecryptView({ showToast, libsReady }) {
                       style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }} 
                       alt="B" 
                     />
-                    
-                    {/* 在微调模式下，如果已经成功净化过，可以快捷切换到纯净图 */}
-                    {purifiedImg && (
-                      <button 
-                        onClick={() => setShowPurified(true)}
-                        className="absolute top-0 right-0 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-emerald-600 rounded-full text-[10px] font-bold flex items-center gap-1 transition-all shadow-md cursor-pointer z-30"
-                      >
-                        <EyeOff size={12}/> 查看自动净化效果
-                      </button>
-                    )}
                   </div>
                 )}
+                
+                {/* 🌟 阶段二：云端深度识别还原明文（右下角） */}
+                <button 
+                  onClick={handleExtractOverlay} 
+                  disabled={isDecoding} 
+                  className="absolute bottom-4 right-4 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-md transition-all flex items-center gap-2 cursor-pointer text-xs"
+                >
+                  {isDecoding ? (
+                    <>
+                      <Loader2 className="animate-spin" size={14}/> 云端识别中...
+                    </>
+                  ) : (
+                    <>
+                      <Cloud size={14}/> ☁️ 云端识别与还原
+                    </>
+                  )}
+                </button>
               </>
             ) : (
               <div className="flex flex-col items-center text-slate-400 py-10">
                 <HelpCircle size={40} className="mb-2 opacity-60 text-slate-300" />
                 <span className="text-sm font-semibold">等待导入视觉分片 A + B...</span>
               </div>
-            )}
-            
-            {imgA && imgB && !showPurified && (
-              <button 
-                onClick={handleExtractOverlay} 
-                disabled={isProcessingOverlay} 
-                className="absolute bottom-4 right-4 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-lg font-bold shadow-md transition-all flex items-center gap-2 cursor-pointer text-xs"
-              >
-                {isProcessingOverlay ? (
-                  <>
-                    <Loader2 className="animate-spin" size={14}/> 叠合深度解析中...
-                  </>
-                ) : (
-                  <>
-                    <Unlock size={14}/> 叠合并还原机密
-                  </>
-                )}
-              </button>
             )}
           </div>
         </div>

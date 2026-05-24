@@ -34,24 +34,21 @@ def img_to_base64(img):
     img.save(buffered, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
 
-# --- 🌟 终极防崩溃：自适应 Hex/Base64 容错解码引擎 ---
+# --- 终极防崩溃：自适应 Hex/Base64 容错解码引擎 ---
 def decode_payload_string(payload_str: str) -> str:
     """
     一键自适应清洗：完美剥离诱导前缀，确保精准命中 Hex 密文流进行 Zlib 还原
     """
-    # 1. 基础解密清洗
     clean_payload = urllib.parse.unquote(payload_str).strip()
     
-    # 2. 强力自适应切分：提取协议标记 #[VC-S] 之后的十六进制流
     if "#[VC-S]" in clean_payload:
         clean_payload = clean_payload.split("#[VC-S]")[1]
     elif "#" in clean_payload:
-        # 兼容性防御：如果扫码器丢失了[VC-S]标签，但保留了#，则直接取#后面的所有内容
         clean_payload = clean_payload.split("#")[1]
     
     clean_payload = clean_payload.replace("[VC-S]", "").replace("[VC-STEGO]", "")
     
-    # 3. 核心尝试 A：Hex 十六进制快速解压 (Case-insensitive)
+    # 核心尝试 A：Hex 十六进制快速解压 (Case-insensitive)
     try:
         hex_chars = "".join([c for c in clean_payload if c in "0123456789abcdefABCDEF"])
         if len(hex_chars) > 0 and len(hex_chars) % 2 == 0:
@@ -60,16 +57,45 @@ def decode_payload_string(payload_str: str) -> str:
     except Exception:
         pass  
         
-    # 4. 核心尝试 B：Base64 兼容解压
+    # 核心尝试 B：Base64 兼容解压
     try:
         b64_cleaned = clean_payload.replace(" ", "+")
         padded_b64 = b64_cleaned + "=" * ((4 - len(b64_cleaned) % 4) % 4)
         compressed_bytes = base64.b64decode(padded_b64)
         return zlib.decompress(compressed_bytes).decode('utf-8')
     except Exception:
-        # 如果 Zlib 彻底失败，作为最后一道防线退回展示原文本
         return clean_payload
 
+# --- 核心图像清洗引擎（跨模块公用） ---
+def process_opencv_purify(img_bytes: bytes):
+    """
+    封装统一的 OpenCV 空间域低通积分与形态学清洗流
+    """
+    nparr = np.frombuffer(img_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # 多尺度低通面积加权积分循环
+    for sc in [0.5, 1.0, 0.33]:
+        dim = (int(img.shape[1] * sc), int(img.shape[0] * sc))
+        resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+        kernel = np.ones((3, 3), np.uint8)
+        clean_mat = cv2.morphologyEx(cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel), cv2.MORPH_OPEN, kernel)
+        
+        detect = cv2.QRCodeDetector()
+        res, _, _ = detect.detectAndDecode(clean_mat)
+        if res:
+            return clean_mat, res
+            
+    # 若多尺度都未在当前帧捕捉到有效条码，则提供默认比例的清洗底图作为可视化微调反馈
+    dim = (int(img.shape[1] * 0.5), int(img.shape[0] * 0.5))
+    resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+    kernel = np.ones((3, 3), np.uint8)
+    clean_mat = cv2.morphologyEx(cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel), cv2.MORPH_OPEN, kernel)
+    return clean_mat, None
 
 # --- 视觉密码核心 (VC) ---
 def add_alignment_marks(img_array):
@@ -119,12 +145,8 @@ def apply_visual_crypto(source_arr):
            img_to_base64(Image.fromarray(opening, mode='L'))
 
 def generate_stego_qr_matrix_and_base64(payload_str: str):
-    """
-    采用高压缩 Zlib + 终极大小写无关 Hex 编码
-    """
     bait_url = "https://g.cn"
     compressed_bytes = zlib.compress(payload_str.encode('utf-8'), level=9)
-    # 🌟 核心升级：改用 Hex 编码，彻底破坏由于 URL 大小写标准化造成的密文损毁
     compressed_hex = compressed_bytes.hex()
     stego_content = f"{bait_url}#[VC-S]{compressed_hex}"
     
@@ -147,14 +169,13 @@ def generate_stego_qr_matrix_and_base64(payload_str: str):
     return source_arr, qr_b64
 
 
-# ================= 🚀 业务接口 =================
+# ================= 🚀 业务解密接口 =================
 
 @app.post("/generate")
 async def generate(text: str = Form(...)):
     try:
         source_arr, stego_qr_b64 = generate_stego_qr_matrix_and_base64(text)
         img1, img2, preview_clean = apply_visual_crypto(source_arr)
-        
         return {
             "status": "success", 
             "ciphertext_qr": stego_qr_b64, 
@@ -167,76 +188,52 @@ async def generate(text: str = Form(...)):
 
 @app.post("/decode_normal_qr")
 async def extract_stego_data(file: UploadFile = File(...)):
-    """
-    直扫解析：支持从上传的图像帧进行形态学滤波，并一键完成 Hex/Base64 的自适应解析
-    """
     try:
         contents = await file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        detect = cv2.QRCodeDetector()
-        val, _, _ = detect.detectAndDecode(img)
-        
-        if not val:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
-            val, _, _ = detect.detectAndDecode(thresh)
-
-        if val:
-            if "[VC-S]" in val:
-                payload = val.split("[VC-S]")[1]
-                return {"status": "success", "content": decode_payload_string(payload)}
-            elif "[VC-STEGO]" in val:
-                payload = val.split("[VC-STEGO]")[1]
-                return {"status": "success", "content": decode_payload_string(payload)}
-            else:
-                return {"status": "success", "content": val}
-        
-        return {"status": "fail", "error": "未在二维码中检测到隐写协议头"}
+        clean_mat, decoded_text = process_opencv_purify(contents)
+        if decoded_text:
+            return {"status": "success", "content": decode_payload_string(decoded_text)}
+        return {"status": "fail", "error": "未在图像帧中检索到可识别矩阵"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
-@app.post("/decode")
-async def decode_vc_key(file: UploadFile = File(...)):
+# ⚡ 阶段一：纯重建层接口 (常驻按钮调用)
+@app.post("/purify_only")
+async def purify_only_interface(file: UploadFile = File(...)):
     """
-    叠合解析：多尺度滤波 + 自适应 Hex 解码
+    只滤波重建，绝不执行数据解压及明文流转换。专门为对齐微调提供可视化回显。
     """
     try:
         contents = await file.read()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        detect = cv2.QRCodeDetector()
-        
-        for sc in [0.5, 1.0, 0.33]:
-            dim = (int(img.shape[1]*sc), int(img.shape[0]*sc))
-            resized = cv2.resize(img, dim, interpolation=cv2.INTER_AREA)
-            gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
-            kernel = np.ones((3,3), np.uint8)
-            clean = cv2.morphologyEx(cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel), cv2.MORPH_OPEN, kernel)
-            
-            res, _, _ = detect.detectAndDecode(clean)
-            if res:
-                return {
-                    "status": "success", 
-                    "content": decode_payload_string(res), 
-                    "cleanImage": img_to_base64(Image.fromarray(clean, mode='L'))
-                }
-        
-        return {"status": "fail", "error": "叠合图像识别失败，请对齐或优化对比度。"}
+        clean_mat, _ = process_opencv_purify(contents)
+        return {
+            "status": "success", 
+            "cleanImage": img_to_base64(Image.fromarray(clean_mat, mode='L'))
+        }
+    except Exception as e:
+        return {"status": "fail", "error": str(e)}
+
+# 🔍 阶段二：业务解密层接口 (云端识别调用)
+@app.post("/decode")
+async def decode_vc_key(file: UploadFile = File(...)):
+    """
+    执行高深度数据链路拆包，最终在气泡弹窗内释放明文。
+    """
+    try:
+        contents = await file.read()
+        clean_mat, decoded_text = process_opencv_purify(contents)
+        if decoded_text:
+            return {
+                "status": "success", 
+                "content": decode_payload_string(decoded_text), 
+                "cleanImage": img_to_base64(Image.fromarray(clean_mat, mode='L'))
+            }
+        return {"status": "fail", "error": "物理对准仍有细微偏置，或对比度不达标，请根据净化预览图微调。"}
     except Exception as e:
         return {"status": "fail", "error": str(e)}
 
 @app.post("/decrypt_payload")
-async def final_decrypt(
-    request: Request,
-    payload: Optional[str] = Form(None),
-    key: Optional[str] = Form(None)
-):
-    """
-    一键自适应解除数据包装并呈现明文
-    """
+async def final_decrypt(request: Request, payload: Optional[str] = Form(None)):
     req_payload = payload
     if not req_payload:
         try:
@@ -246,7 +243,7 @@ async def final_decrypt(
             pass
             
     if not req_payload:
-        return {"status": "fail", "error": "未接收到有效密文 payload 数据"}
+        return {"status": "fail", "error": "未接收到有效密文数据"}
 
     try:
         clean_plaintext = decode_payload_string(req_payload)
